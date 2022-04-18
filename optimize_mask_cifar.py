@@ -14,9 +14,9 @@ import data.poison_cifar as poison
 parser = argparse.ArgumentParser(description='Train poisoned networks')
 
 # Basic model parameters.
-parser.add_argument('--arch', type=str, default='resnet18',
+parser.add_argument('--arch', type=str, default='vgg16_bn',
                     choices=['resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152', 'MobileNetV2', 'vgg19_bn'])
-parser.add_argument('--checkpoint', type=str, required=True, help='The checkpoint to be pruned')
+parser.add_argument('--checkpoint', type=str, default='./save/model_last.th', help='The checkpoint to be pruned')
 parser.add_argument('--widen-factor', type=int, default=1, help='widen_factor for WideResNet')
 parser.add_argument('--batch-size', type=int, default=128, help='the batch size for dataloader')
 parser.add_argument('--lr', type=float, default=0.2, help='the learning rate for mask optimization')
@@ -24,9 +24,9 @@ parser.add_argument('--nb-iter', type=int, default=2000, help='the number of ite
 parser.add_argument('--print-every', type=int, default=500, help='print results every few iterations')
 parser.add_argument('--data-dir', type=str, default='../data', help='dir to the dataset')
 parser.add_argument('--val-frac', type=float, default=0.01, help='The fraction of the validate set')
-parser.add_argument('--output-dir', type=str, default='logs/models/')
+parser.add_argument('--output-dir', type=str, default='./save/')
 
-parser.add_argument('--trigger-info', type=str, default='', help='The information of backdoor trigger')
+parser.add_argument('--trigger-info', type=str, default='./save/trigger_info.th', help='The information of backdoor trigger')
 parser.add_argument('--poison-type', type=str, default='benign', choices=['badnets', 'blend', 'clean-label', 'benign'],
                     help='type of backdoor attacks for evaluation')
 parser.add_argument('--poison-target', type=int, default=0, help='target class of backdoor attack')
@@ -175,7 +175,7 @@ def mask_train(model, criterion, mask_opt, noise_opt, data_loader):
     total_loss = 0.0
     nb_samples = 0
     for i, (images, labels) in enumerate(data_loader):
-        images, labels = images.to(device), labels.to(device)
+        images, labels = images.to(device), labels.to(device, dtype = torch.long)
         nb_samples += images.size(0)
 
         # step 1: calculate the adversarial perturbation for neurons
@@ -224,7 +224,7 @@ def test(model, criterion, data_loader):
     total_loss = 0.0
     with torch.no_grad():
         for i, (images, labels) in enumerate(data_loader):
-            images, labels = images.to(device), labels.to(device)
+            images, labels = images.to(device), labels.to(device, dtype = torch.long)
             output = model(images)
             total_loss += criterion(output, labels).item()
             pred = output.data.max(1)[1]
