@@ -7,6 +7,7 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision.datasets import CIFAR10
 import torchvision.transforms as transforms
+from datasets import get_loaders
 
 import models
 import data.poison_cifar as poison
@@ -18,15 +19,15 @@ parser.add_argument('--arch', type=str, default='vgg16_bn',
                     choices=['resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152', 'MobileNetV2', 'vgg19_bn'])
 parser.add_argument('--widen-factor', type=int, default=1, help='widen_factor for WideResNet')
 parser.add_argument('--batch-size', type=int, default=128, help='the batch size for dataloader')
-parser.add_argument('--epoch', type=int, default=2 0, help='the numbe of epoch for training')
-parser.add_argument('--schedule', type=int, nargs='+', default=[100, 150],
+parser.add_argument('--epoch', type=int, default=100, help='the numbe of epoch for training')
+parser.add_argument('--schedule', type=int, nargs='+', default=[50, 75],
                     help='Decrease learning rate at these epochs.')
 parser.add_argument('--save-every', type=int, default=20, help='save checkpoints every few epochs')
 parser.add_argument('--data-dir', type=str, default='../data', help='dir to the dataset')
-parser.add_argument('--output-dir', type=str, default='./save/')
+parser.add_argument('--output-dir', type=str, default='./unlearning_6/')
 # backdoor parameters
 parser.add_argument('--clb-dir', type=str, default='', help='dir to training data under clean label attack')
-parser.add_argument('--poison-type', type=str, default='badnets', choices=['badnets', 'blend', 'clean-label', 'benign'],
+parser.add_argument('--poison-type', type=str, default='benign', choices=['badnets', 'blend', 'clean-label', 'benign'],
                     help='type of backdoor attacks used during training')
 parser.add_argument('--poison-rate', type=float, default=0.05,
                     help='proportion of poison examples in the training set')
@@ -63,39 +64,40 @@ def main():
         transforms.ToTensor(),
         transforms.Normalize(MEAN_CIFAR10, STD_CIFAR10)
     ])
+    trigger_info = None
 
     # Step 1: create poisoned / clean dataset
-    orig_train = CIFAR10(root=args.data_dir, train=True, download=True, transform=transform_train)
-    clean_train, clean_val = poison.split_dataset(dataset=orig_train, val_frac=0.1,
-                                                  perm=np.loadtxt('./data/cifar_shuffle.txt', dtype=int))
-    clean_test = CIFAR10(root=args.data_dir, train=False, download=True, transform=transform_test)
-    triggers = {'badnets': 'checkerboard_1corner',
-                'clean-label': 'checkerboard_4corner',
-                'blend': 'gaussian_noise',
-                'benign': None}
-    trigger_type = triggers[args.poison_type]
-    if args.poison_type in ['badnets', 'blend']:
-        poison_train, trigger_info = \
-            poison.add_trigger_cifar(data_set=clean_train, trigger_type=trigger_type, poison_rate=args.poison_rate,
-                                     poison_target=args.poison_target, trigger_alpha=args.trigger_alpha)
-        poison_test = poison.add_predefined_trigger_cifar(data_set=clean_test, trigger_info=trigger_info)
-    elif args.poison_type == 'clean-label':
-        poison_train = poison.CIFAR10CLB(root=args.clb_dir, transform=transform_train)
-        pattern, mask = poison.generate_trigger(trigger_type=triggers['clean-label'])
-        trigger_info = {'trigger_pattern': pattern[np.newaxis, :, :, :], 'trigger_mask': mask[np.newaxis, :, :, :],
-                        'trigger_alpha': args.trigger_alpha, 'poison_target': np.array([args.poison_target])}
-        poison_test = poison.add_predefined_trigger_cifar(data_set=clean_test, trigger_info=trigger_info)
-    elif args.poison_type == 'benign':
-        poison_train = clean_train
-        poison_test = clean_test
-        trigger_info = None
-    else:
-        raise ValueError('Please use valid backdoor attacks: [badnets | blend | clean-label]')
-
-    poison_train_loader = DataLoader(poison_train, batch_size=args.batch_size, shuffle=True, num_workers=0)
-    poison_test_loader = DataLoader(poison_test, batch_size=args.batch_size, num_workers=0)
-    clean_test_loader = DataLoader(clean_test, batch_size=args.batch_size, num_workers=0)
-
+    # orig_train = CIFAR10(root=args.data_dir, train=True, download=True, transform=transform_train)
+    # clean_train, clean_val = poison.split_dataset(dataset=orig_train, val_frac=0.1,
+    #                                               perm=np.loadtxt('./data/cifar_shuffle.txt', dtype=int))
+    # clean_test = CIFAR10(root=args.data_dir, train=False, download=True, transform=transform_test)
+    # triggers = {'badnets': 'checkerboard_1corner',
+    #             'clean-label': 'checkerboard_4corner',
+    #             'blend': 'gaussian_noise',
+    #             'benign': None}
+    # trigger_type = triggers[args.poison_type]
+    # if args.poison_type in ['badnets', 'blend']:
+    #     poison_train, trigger_info = \
+    #         poison.add_trigger_cifar(data_set=clean_train, trigger_type=trigger_type, poison_rate=args.poison_rate,
+    #                                  poison_target=args.poison_target, trigger_alpha=args.trigger_alpha)
+    #     poison_test = poison.add_predefined_trigger_cifar(data_set=clean_test, trigger_info=trigger_info)
+    # elif args.poison_type == 'clean-label':
+    #     poison_train = poison.CIFAR10CLB(root=args.clb_dir, transform=transform_train)
+    #     pattern, mask = poison.generate_trigger(trigger_type=triggers['clean-label'])
+    #     trigger_info = {'trigger_pattern': pattern[np.newaxis, :, :, :], 'trigger_mask': mask[np.newaxis, :, :, :],
+    #                     'trigger_alpha': args.trigger_alpha, 'poison_target': np.array([args.poison_target])}
+    #     poison_test = poison.add_predefined_trigger_cifar(data_set=clean_test, trigger_info=trigger_info)
+    # elif args.poison_type == 'benign':
+    #     poison_train = clean_train
+    #     poison_test = clean_test
+    #     trigger_info = None
+    # else:
+    #     raise ValueError('Please use valid backdoor attacks: [badnets | blend | clean-label]')
+    #
+    # poison_train_loader = DataLoader(poison_train, batch_size=args.batch_size, shuffle=True, num_workers=0)
+    # poison_test_loader = DataLoader(poison_test, batch_size=args.batch_size, num_workers=0)
+    # clean_test_loader = DataLoader(clean_test, batch_size=args.batch_size, num_workers=0)
+    poison_train_loader, poison_test_loader, clean_test_loader  = get_loaders('cifar10', 6)
     # Step 2: prepare model, criterion, optimizer, and learning rate scheduler.
     net = getattr(models, args.arch)(num_classes=10).to(device)
     criterion = torch.nn.CrossEntropyLoss().to(device)
@@ -103,7 +105,7 @@ def main():
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.schedule, gamma=0.1)
 
     # Step 3: train backdoored models
-    logger.info('Epoch \t lr \t Time \t TrainLoss \t TrainACC \t PoisonLoss \t PoisonACC \t CleanLoss \t CleanACC')
+    logger.info('Epoch \t lr \t Time \t TrainLoss \t TrainACC \t RemoveLoss \t RemoveACC \t CleanLoss \t CleanACC')
     torch.save(net.state_dict(), os.path.join(args.output_dir, 'model_init.th'))
     if trigger_info is not None:
         torch.save(trigger_info, os.path.join(args.output_dir, 'trigger_info.th'))
@@ -113,6 +115,8 @@ def main():
         train_loss, train_acc = train(model=net, criterion=criterion, optimizer=optimizer,
                                       data_loader=poison_train_loader)
         cl_test_loss, cl_test_acc = test(model=net, criterion=criterion, data_loader=clean_test_loader)
+        po_test_loss = 0
+        po_test_acc = 0
         po_test_loss, po_test_acc = test(model=net, criterion=criterion, data_loader=poison_test_loader)
         scheduler.step()
         end = time.time()
