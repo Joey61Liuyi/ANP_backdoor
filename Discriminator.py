@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, RandomSampler
 from torchvision.datasets import CIFAR10
-from datasets import get_loaders, get_dis_loaders
+from datasets import get_loaders, get_dis_loaders, get_dis_ratated_loaders
 import torchvision.transforms as transforms
 
 import models
@@ -17,9 +17,9 @@ import data.poison_cifar as poison
 parser = argparse.ArgumentParser(description='Train poisoned networks')
 
 # Basic model parameters.
-parser.add_argument('--arch', type=str, default='vgg16_bn',
+parser.add_argument('--arch', type=str, default='resnet18',
                     choices=['resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152', 'MobileNetV2', 'vgg19_bn'])
-parser.add_argument('--checkpoint', type=str, default='./unlearning_full/model_last.th', help='The checkpoint to be pruned')
+parser.add_argument('--checkpoint', type=str, default='./unlearning_rotate_full/model_last.th', help='The checkpoint to be pruned')
 parser.add_argument('--widen-factor', type=int, default=1, help='widen_factor for WideResNet')
 parser.add_argument('--batch-size', type=int, default=128, help='the batch size for dataloader')
 parser.add_argument('--lr', type=float, default=0.2, help='the learning rate for mask optimization')
@@ -27,8 +27,8 @@ parser.add_argument('--nb-iter', type=int, default=2000, help='the number of ite
 parser.add_argument('--print-every', type=int, default=500, help='print results every few iterations')
 parser.add_argument('--data-dir', type=str, default='../data', help='dir to the dataset')
 parser.add_argument('--val-frac', type=float, default=0.01, help='The fraction of the validate set')
-parser.add_argument('--output-dir', type=str, default='./unlearning_6/')
-parser.add_argument('--trigger-info', type=str, default='./save/trigger_info.th', help='The information of backdoor trigger')
+parser.add_argument('--output-dir', type=str, default='./unlearning_rotate_full/')
+parser.add_argument('--trigger-info', type=str, default='./unlearning_rotate_full/trigger_info.th', help='The information of backdoor trigger')
 parser.add_argument('--poison-type', type=str, default='benign', choices=['badnets', 'blend', 'clean-label', 'benign'],
                     help='type of backdoor attacks for evaluation')
 parser.add_argument('--poison-target', type=int, default=0, help='target class of backdoor attack')
@@ -55,9 +55,10 @@ def weights_init_normal(m):
 def main():
 
     # Step 1: create dataset - clean val set, poisoned test set, and clean test set.
-    unlearning_class = 6
-    poison_train_loader = get_dis_loaders('cifar10', unlearning_class)
-    _, clean_valid_loader, _ = get_loaders('cifar10', None)
+    unlearning_class = 90
+    poison_train_loader, dis_loader, test_loader = get_dis_ratated_loaders('mnist', unlearning_class)
+    # _, clean_valid_loader, _ = get_loaders('cifar10', None)
+    # fine_tuning_loader, _, _ = get_loaders('cifar10', unlearning_class)
 
     # Step 2: load model checkpoints and trigger info
     state_dict = torch.load(args.checkpoint, map_location=device)
@@ -66,7 +67,6 @@ def main():
     net = net.to(device)
 
 
-    criterion = torch.nn.CrossEntropyLoss().to(device)
     # noise_params = [v for n, v in parameters if "neuron_noise" in n]
     # noise_optimizer = torch.optim.SGD(noise_params, lr=args.anp_eps / args.anp_steps)
 
@@ -81,26 +81,45 @@ def main():
     mask_loss.cuda()
     parameters = list(net.named_parameters())
     mask_params = [v for n, v in parameters if "neuron_mask" in n]
-    mask_optimizer = torch.optim.SGD(mask_params, lr=args.lr, momentum=0.9)
-    mask_scheduler = torch.optim.lr_scheduler.MultiStepLR(mask_optimizer, milestones=[25, 35], gamma=0.5)
+    mask_optimizer = torch.optim.SGD(mask_params, lr=0.5, momentum=0.9)
+    mask_scheduler = torch.optim.lr_scheduler.MultiStepLR(mask_optimizer, milestones=[100, 150], gamma=0.5)
+
+    criterion = torch.nn.CrossEntropyLoss().to(device)
+    fine_tuning_optimizer = torch.optim.SGD(mask_params, lr=0.001, momentum=0.9)
+    fine_tuning_scheduler = torch.optim.lr_scheduler.MultiStepLR(mask_optimizer, milestones=[25, 35], gamma=0.5)
+
+    original_loss, original_acc = 0,0
 
 
-    # Step 3: train backdoored models
+    # Step 3: trai n backdoored models
     print('Iter \t lr \t Time \t DissLoss \t DissACC \t MaskLoss_target \t MaskACC_target \t CleanLoss \t CleanACC')
-    for i in range(50):
+
+    for i in range(20):
         start = time.time()
         lr = mask_optimizer.param_groups[0]['lr']
-        dis_loss, dis_acc = discriminator_train(model=net, discriminator=discriminator, criterion=auxiliary_loss, data_loader=poison_train_loader,
-                                           dis_opt=d_optimizer, target_label=unlearning_class)
-        mask_train_loss = mask_train(model=net,  discriminator=discriminator, criterion=mask_loss, data_loader=poison_train_loader, mask_opt=mask_optimizer, target_label=unlearning_class, mask_scheduler = mask_scheduler)
-
-
-        # cl_test_loss, cl_test_acc = test(model=net, criterion=criterion, data_loader=clean_test_loader)
-        # po_test_loss, po_test_acc = test(model=net, criterion=criterion, data_loader=poison_test_loader)
+        dis_loss, dis_acc = discriminator_train(model=net, discriminator=discriminator, criterion=auxiliary_loss,
+                                                data_loader=dis_loader,
+                                                dis_opt=d_optimizer, target_label=unlearning_class, step=79)
         end = time.time()
         print('{} \t {:.3f} \t {:.1f} \t {:.4f} \t {:.4f} \t {:.4f} \t {:.4f} \t {:.4f} \t {:.4f}'.format(
+            (i + 1), lr, end - start, dis_loss, dis_acc, 0, 0,
+            original_loss, original_acc))
+    torch.save(discriminator.state_dict(), os.path.join(args.output_dir, 'discriminator.pt'))
+    for i in range(200):
+        start = time.time()
+        lr = mask_optimizer.param_groups[0]['lr']
+        dis_loss, dis_acc = discriminator_train(model=net, discriminator=discriminator, criterion=auxiliary_loss, data_loader=dis_loader,
+                                           dis_opt=d_optimizer, target_label=unlearning_class, step=40)
+        mask_train_loss = mask_train(model=net,  discriminator=discriminator, criterion=mask_loss, data_loader=test_loader, mask_opt=mask_optimizer, target_label=unlearning_class, mask_scheduler = mask_scheduler, step=40)
+        original_loss, original_acc = fine_tuning_train(model = net, criterion = criterion, data_loader = poison_train_loader, opt = fine_tuning_optimizer, scheduler=fine_tuning_scheduler, step=1)
+
+        cl_test_loss, cl_test_acc = test(model=net, criterion=criterion, data_loader=test_loader)
+
+        original_loss, original_acc = test(model=net, criterion=criterion, data_loader=poison_train_loader)
+        end = time.time()
+        print('{} \t {:.3f} \t {:.1f} \t {:.4f} \t {:.4f} \t {:.4f} \t {:.4f} \t {:.4f} \t {:.4f}\t {:.4f}\t {:.4f}\t'.format(
             (i + 1), lr, end - start, dis_loss, dis_acc, mask_train_loss, 0,
-            0, 0))
+            original_loss, original_acc, cl_test_loss, cl_test_acc))
     torch.save(discriminator.state_dict(), os.path.join(args.output_dir, 'discriminator.pt'))
     save_mask_scores(net.state_dict(), os.path.join(args.output_dir, 'mask_values.txt'))
 
@@ -177,16 +196,16 @@ class Discriminator(nn.Module):
 
 
 def discriminator_train(model, discriminator, criterion, data_loader,
-                                           dis_opt, target_label):
+                                           dis_opt, target_label, step):
     model.eval()
     discriminator.train()
     total_correct = 0
     total_loss = 0.0
     nb_samples = 0
-    for i, (images, labels) in enumerate(data_loader):
+    for i in range(step):
+        images, labels = next(iter(data_loader))
         dis_opt.zero_grad()
         images = images.to(device)
-        labels = labels == target_label
         labels = labels.to(device, dtype = torch.long)
         nb_samples += images.size(0)
         feature, logits = model(images)
@@ -202,13 +221,37 @@ def discriminator_train(model, discriminator, criterion, data_loader,
     acc = float(total_correct) / nb_samples
     return loss, acc
 
+def discriminator_test(model, discriminator, criterion, data_loader,
+                                           dis_opt, target_label):
+    model.eval()
+    discriminator.eval()
+    total_correct = 0
+    total_loss = 0.0
+    nb_samples = 0
+    for i, (images, labels) in enumerate(data_loader):
+        dis_opt.zero_grad()
+        images = images.to(device)
+        labels = labels.to(device, dtype = torch.long)
+        nb_samples += images.size(0)
+        feature, logits = model(images)
+        output = discriminator(feature.detach())
+        loss_dis = criterion(output, labels)
+        pred = output.data.max(1)[1]
+        total_correct += pred.eq(labels.view_as(pred)).sum()
+        total_loss += loss_dis.item()
 
-def mask_train(model, discriminator, criterion, mask_opt, data_loader, target_label, mask_scheduler):
+    loss = total_loss / len(data_loader)
+    acc = float(total_correct) / nb_samples
+    return loss, acc
+
+
+def mask_train(model, discriminator, criterion, mask_opt, data_loader, target_label, mask_scheduler, step):
     discriminator.eval()
     model.train()
     total_loss = 0.0
     operator = nn.Softmax(dim=1)
-    for i, (images, labels) in enumerate(data_loader):
+    for i in range(step):
+        images, labels = next(iter(data_loader))
         images = images.to(device)
         labels = torch.ones(labels.shape[0],2)
         labels = operator(labels)
@@ -251,6 +294,30 @@ def mask_train(model, discriminator, criterion, mask_opt, data_loader, target_la
     mask_scheduler.step()
     return loss
 
+def fine_tuning_train(model, criterion, data_loader, opt, scheduler, step):
+    model.train()
+    total_correct = 0
+    total_loss = 0.0
+    nb_samples = 0
+    for i in range(step):
+        images, labels = next(iter(data_loader))
+        images = images.to(device)
+        labels = labels.to(device, dtype = torch.long)
+        opt.zero_grad()
+        nb_samples += images.size(0)
+        feature, output = model(images)
+        pred = output.data.max(1)[1]
+        total_correct += pred.eq(labels.view_as(pred)).sum()
+        loss = criterion(output, labels)
+        total_loss += loss
+        loss.backward()
+        opt.step()
+        clip_mask(model)
+    loss = total_loss / len(data_loader)
+    acc = float(total_correct) / nb_samples
+    scheduler.step()
+    return loss, acc
+
 
 def test(model, criterion, data_loader):
     model.eval()
@@ -259,7 +326,7 @@ def test(model, criterion, data_loader):
     with torch.no_grad():
         for i, (images, labels) in enumerate(data_loader):
             images, labels = images.to(device), labels.to(device, dtype = torch.long)
-            output = model(images)
+            feature, output = model(images)
             total_loss += criterion(output, labels).item()
             pred = output.data.max(1)[1]
             total_correct += pred.eq(labels.data.view_as(pred)).sum()

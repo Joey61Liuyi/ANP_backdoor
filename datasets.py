@@ -3,7 +3,8 @@ from typing import List, Union
 import os
 import copy
 import numpy as np
-
+from PIL import Image, ImageColor, ImageOps
+from scipy.stats import bernoulli
 import torch
 import torchvision
 import torchvision.transforms as transforms
@@ -80,6 +81,14 @@ def _get_cifar_transforms(augment=True):
 
     return transform_train, transform_test
 
+def _get_mnist_transforms(augment=True):
+    apply_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,))])
+
+    return apply_transform, apply_transform
+
+
 
 def _get_imagenet_transforms(augment=True):
     transform_augment = transforms.Compose([
@@ -121,6 +130,12 @@ def cifar10(root, augment=False):
     transform_train, transform_test = _get_cifar_transforms(augment=augment)
     train_set = torchvision.datasets.CIFAR10(root=root, train=True, download=True, transform=transform_train)
     test_set = torchvision.datasets.CIFAR10(root=root, train=False, download=True, transform=transform_test)
+    return train_set, test_set
+
+def mnist(root, augment=False):
+    transform_train, transform_test = _get_mnist_transforms(augment = augment)
+    train_set = torchvision.datasets.MNIST(root=root, train=True, download=True, transform=transform_train)
+    test_set = torchvision.datasets.MNIST(root=root, train=False, download=True, transform=transform_test)
     return train_set, test_set
 
 
@@ -368,6 +383,63 @@ def get_dis_loaders(dataset_name, class_to_replace: int = None, num_indexes_to_r
 
     return train_loader
 
+def get_dis_ratated_loaders(dataset_name, degree_to_replace: int = None, num_indexes_to_replace: int = None,
+                indexes_to_replace: List[int] = None, seed: int = 1, only_mark: bool = False, root: str = './datasets',
+                batch_size=128, shuffle=True,
+                **dataset_kwargs):
+    '''
+
+    :param dataset_name: Name of dataset to use
+    :param class_to_replace: If not None, specifies which class to replace completely or partially
+    :param num_indexes_to_replace: If None, all samples from `class_to_replace` are replaced. Else, only replace
+                                   `num_indexes_to_replace` samples
+    :param indexes_to_replace: If not None, denotes the indexes of samples to replace. Only one of class_to_replace and
+                               indexes_to_replace can be specidied.
+    :param seed: Random seed to sample the samples to replace and to initialize the data loaders so that they sample
+                 always in the same order
+    :param root: Root directory to initialize the dataset
+    :param batch_size: Batch size of data loader
+    :param shuffle: Whether train data should be randomly shuffled when loading (test data are never shuffled)
+    :param dataset_kwargs: Extra arguments to pass to the dataset init.
+    :return: The train_loader and test_loader
+    '''
+    manual_seed(seed)
+    if root is None:
+        root = os.path.expanduser('~/data')
+    train_set, test_set = _DATASETS[dataset_name](root, **dataset_kwargs)
+    # train_set.targets = np.array(train_set.targets)
+    # test_set.targets = np.array(test_set.targets)
+
+    for i in range(3):
+        if (i+1)*90 == degree_to_replace:
+            pass
+        else:
+            data_new = torch.load('mnist_data_rotated_{}.pt'.format(90*(i+1)))
+            train_set.data = torch.cat((train_set.data, data_new.data),0)
+            train_set.targets = torch.cat((train_set.targets, data_new.targets), 0)
+            data_new = torch.load('mnist_test_data_rotated_{}.pt'.format(90*(i+1)))
+            test_set.data = torch.cat((test_set.data, data_new.data), 0)
+            test_set.targets = torch.cat((test_set.targets, data_new.targets), 0)
+
+    data_rotated = torch.load('mnist_data_rotated_{}.pt'.format(degree_to_replace))
+    data_rotated_original = copy.deepcopy(data_rotated)
+    indexes = np.random.choice(len(train_set.targets), len(data_rotated.targets), replace=False)
+    data_rotated.data = torch.cat((data_rotated.data, train_set.data[indexes]), 0)
+    data_rotated.targets = torch.cat((torch.ones(len(data_rotated.targets)), torch.zeros(len(data_rotated.targets))), 0)
+
+    loader_args = {'num_workers': 0, 'pin_memory': False}
+
+    def _init_fn(worker_id):
+        np.random.seed(int(seed))
+
+    train_loader = torch.utils.data.DataLoader(train_set, batch_size=20, shuffle=shuffle,
+                                               worker_init_fn=_init_fn if seed is not None else None, **loader_args)
+    dis_loader = torch.utils.data.DataLoader(data_rotated, batch_size=batch_size, shuffle=shuffle,
+                                               worker_init_fn=_init_fn if seed is not None else None, **loader_args)
+    test_loader = torch.utils.data.DataLoader(data_rotated_original, batch_size=batch_size, shuffle=shuffle,
+                                             worker_init_fn=_init_fn if seed is not None else None, **loader_args)
+
+    return train_loader, dis_loader, test_loader
 
 def get_loaders(dataset_name, class_to_replace: int = None, num_indexes_to_replace: int = None,
                 indexes_to_replace: List[int] = None, seed: int = 1, only_mark: bool = False, root: str = './datasets',
@@ -393,7 +465,6 @@ def get_loaders(dataset_name, class_to_replace: int = None, num_indexes_to_repla
     if root is None:
         root = os.path.expanduser('~/data')
     train_set, test_set = _DATASETS[dataset_name](root, **dataset_kwargs)
-    train_set.targets = np.array(train_set.targets)
     test_set.targets = np.array(test_set.targets)
 
     valid_set = copy.deepcopy(train_set)
@@ -445,6 +516,83 @@ def get_loaders(dataset_name, class_to_replace: int = None, num_indexes_to_repla
                                               worker_init_fn=_init_fn if seed is not None else None, **loader_args)
 
     return train_loader, valid_loader, test_loader
+
+def get_roated_loader(dataset_name, degree_to_replace: int = None, num_indexes_to_replace: int = None,
+                indexes_to_replace: List[int] = None, seed: int = 1, only_mark: bool = False, root: str = './datasets',
+                batch_size=128, shuffle=True,
+                **dataset_kwargs):
+    '''
+
+    :param dataset_name: Name of dataset to use
+    :param class_to_replace: If not None, specifies which class to replace completely or partially
+    :param num_indexes_to_replace: If None, all samples from `class_to_replace` are replaced. Else, only replace
+                                   `num_indexes_to_replace` samples
+    :param indexes_to_replace: If not None, denotes the indexes of samples to replace. Only one of class_to_replace and
+                               indexes_to_replace can be specidied.
+    :param seed: Random seed to sample the samples to replace and to initialize the data loaders so that they sample
+                 always in the same order
+    :param root: Root directory to initialize the dataset
+    :param batch_size: Batch size of data loader
+    :param shuffle: Whether train data should be randomly shuffled when loading (test data are never shuffled)
+    :param dataset_kwargs: Extra arguments to pass to the dataset init.
+    :return: The train_loader and test_loader
+    '''
+    manual_seed(seed)
+    if root is None:
+        root = os.path.expanduser('~/data')
+    train_set, test_set = _DATASETS[dataset_name](root, **dataset_kwargs)
+    # subset_size = 15000
+    # indices = np.random.choice(len(train_set.targets), subset_size, replace=False)
+    # for i in range(3):
+    #     indexes = np.random.choice(indices, 5000, replace=False)
+    #     indices = list(set(indices)-set(indexes))
+    #     tep = copy.deepcopy(train_set)
+    #     tep.data = train_set.data[indexes]
+    #     tep.data = torch.rot90(tep.data, i+1, [1,2])
+    #     tep.targets = train_set.targets[indexes]
+    #     torch.save(tep, 'mnist_data_rotated_{}.pt'.format(90*(i+1)))
+    # #
+    # subset_size = 3000
+    # indices = np.random.choice(len(test_set.targets), subset_size, replace=False)
+    # for i in range(3):
+    #     indexes = np.random.choice(indices, 1000, replace=False)
+    #     indices = list(set(indices)-set(indexes))
+    #     tep = copy.deepcopy(test_set)
+    #     tep.data = test_set.data[indexes]
+    #     tep.data = torch.rot90(tep.data, i+1, [1, 2])
+    #     tep.targets = test_set.targets[indexes]
+    #     torch.save(tep, 'mnist_test_data_rotated_{}.pt'.format(90*(i+1)))
+
+    for i in range(3):
+        if (i+1)*90 == degree_to_replace:
+            pass
+        else:
+            data_new = torch.load('mnist_data_rotated_{}.pt'.format(90*(i+1)))
+            train_set.data = torch.cat((train_set.data, data_new.data),0)
+            train_set.targets = torch.cat((train_set.targets, data_new.targets), 0)
+            data_new = torch.load('mnist_test_data_rotated_{}.pt'.format(90*(i+1)))
+            test_set.data = torch.cat((test_set.data, data_new.data), 0)
+            test_set.targets = torch.cat((test_set.targets, data_new.targets), 0)
+
+    valid_set = torch.load('mnist_data_rotated_{}.pt'.format(degree_to_replace))
+
+    # train_set.targets = np.array(train_set.targets)
+    # test_set.targets = np.array(test_set.targets)
+    rng = np.random.RandomState(seed)
+    loader_args = {'num_workers': 0, 'pin_memory': False}
+
+    def _init_fn(worker_id):
+        np.random.seed(int(seed))
+
+    train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=shuffle,
+                                               worker_init_fn=_init_fn if seed is not None else None, **loader_args)
+    valid_loader = torch.utils.data.DataLoader(valid_set, batch_size=batch_size, shuffle=False,
+                                               worker_init_fn=_init_fn if seed is not None else None, **loader_args)
+    test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=False,
+                                              worker_init_fn=_init_fn if seed is not None else None, **loader_args)
+
+    return train_loader, valid_loader, test_loader
+
 
 if __name__ == '__main__':
     tep = get_loaders('cifar10', class_to_replace=0)

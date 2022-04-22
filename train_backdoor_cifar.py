@@ -7,7 +7,7 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision.datasets import CIFAR10
 import torchvision.transforms as transforms
-from datasets import get_loaders
+from datasets import get_loaders, get_roated_loader
 
 import models
 import data.poison_cifar as poison
@@ -15,16 +15,16 @@ import data.poison_cifar as poison
 parser = argparse.ArgumentParser(description='Train poisoned networks')
 
 # Basic model parameters.
-parser.add_argument('--arch', type=str, default='vgg16_bn',
+parser.add_argument('--arch', type=str, default='resnet18',
                     choices=['resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152', 'MobileNetV2', 'vgg19_bn'])
 parser.add_argument('--widen-factor', type=int, default=1, help='widen_factor for WideResNet')
 parser.add_argument('--batch-size', type=int, default=128, help='the batch size for dataloader')
-parser.add_argument('--epoch', type=int, default=100, help='the numbe of epoch for training')
-parser.add_argument('--schedule', type=int, nargs='+', default=[50, 75],
+parser.add_argument('--epoch', type=int, default=50, help='the numbe of epoch for training')
+parser.add_argument('--schedule', type=int, nargs='+', default=[25, 35],
                     help='Decrease learning rate at these epochs.')
 parser.add_argument('--save-every', type=int, default=20, help='save checkpoints every few epochs')
 parser.add_argument('--data-dir', type=str, default='../data', help='dir to the dataset')
-parser.add_argument('--output-dir', type=str, default='./unlearning_6/')
+parser.add_argument('--output-dir', type=str, default='./unlearning_rotate_remove_90/')
 # backdoor parameters
 parser.add_argument('--clb-dir', type=str, default='', help='dir to training data under clean label attack')
 parser.add_argument('--poison-type', type=str, default='benign', choices=['badnets', 'blend', 'clean-label', 'benign'],
@@ -97,7 +97,8 @@ def main():
     # poison_train_loader = DataLoader(poison_train, batch_size=args.batch_size, shuffle=True, num_workers=0)
     # poison_test_loader = DataLoader(poison_test, batch_size=args.batch_size, num_workers=0)
     # clean_test_loader = DataLoader(clean_test, batch_size=args.batch_size, num_workers=0)
-    poison_train_loader, poison_test_loader, clean_test_loader  = get_loaders('cifar10', 6)
+
+    poison_train_loader, poison_test_loader, clean_test_loader  = get_roated_loader('mnist', 90)
     # Step 2: prepare model, criterion, optimizer, and learning rate scheduler.
     net = getattr(models, args.arch)(num_classes=10).to(device)
     criterion = torch.nn.CrossEntropyLoss().to(device)
@@ -139,7 +140,7 @@ def train(model, criterion, optimizer, data_loader):
     for i, (images, labels) in enumerate(data_loader):
         images, labels = images.to(device), labels.to(device,  dtype = torch.long)
         optimizer.zero_grad()
-        output = model(images)
+        feature, output = model(images)
         loss = criterion(output, labels)
 
         pred = output.data.max(1)[1]
@@ -161,7 +162,7 @@ def test(model, criterion, data_loader):
     with torch.no_grad():
         for i, (images, labels) in enumerate(data_loader):
             images, labels = images.to(device), labels.to(device, dtype = torch.long)
-            output = model(images)
+            feature, output = model(images)
             total_loss += criterion(output, labels).item()
             pred = output.data.max(1)[1]
             total_correct += pred.eq(labels.data.view_as(pred)).sum()
