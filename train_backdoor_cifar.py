@@ -21,10 +21,10 @@ parser.add_argument('--widen-factor', type=int, default=1, help='widen_factor fo
 parser.add_argument('--batch-size', type=int, default=128, help='the batch size for dataloader')
 parser.add_argument('--epoch', type=int, default=50, help='the numbe of epoch for training')
 parser.add_argument('--schedule', type=int, nargs='+', default=[25, 35],
-                    help='Decrease learning rate at these epochs.')
+                    help='Decrease learning rate at   these epochs.')
 parser.add_argument('--save-every', type=int, default=20, help='save checkpoints every few epochs')
 parser.add_argument('--data-dir', type=str, default='../data', help='dir to the dataset')
-parser.add_argument('--output-dir', type=str, default='./unlearning_rotate_remove_90/')
+parser.add_argument('--output-dir', type=str, default='./unlearning_rotate_full/')
 # backdoor parameters
 parser.add_argument('--clb-dir', type=str, default='', help='dir to training data under clean label attack')
 parser.add_argument('--poison-type', type=str, default='benign', choices=['badnets', 'blend', 'clean-label', 'benign'],
@@ -94,11 +94,12 @@ def main():
     # else:
     #     raise ValueError('Please use valid backdoor attacks: [badnets | blend | clean-label]')
     #
+
     # poison_train_loader = DataLoader(poison_train, batch_size=args.batch_size, shuffle=True, num_workers=0)
     # poison_test_loader = DataLoader(poison_test, batch_size=args.batch_size, num_workers=0)
     # clean_test_loader = DataLoader(clean_test, batch_size=args.batch_size, num_workers=0)
 
-    poison_train_loader, poison_test_loader, clean_test_loader  = get_roated_loader('mnist', 90)
+    poison_train_loader, poison_test_loader, clean_test_loader  = get_roated_loader('cifar10', 90)
     # Step 2: prepare model, criterion, optimizer, and learning rate scheduler.
     net = getattr(models, args.arch)(num_classes=10).to(device)
     criterion = torch.nn.CrossEntropyLoss().to(device)

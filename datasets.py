@@ -407,39 +407,63 @@ def get_dis_ratated_loaders(dataset_name, degree_to_replace: int = None, num_ind
     if root is None:
         root = os.path.expanduser('~/data')
     train_set, test_set = _DATASETS[dataset_name](root, **dataset_kwargs)
-    # train_set.targets = np.array(train_set.targets)
-    # test_set.targets = np.array(test_set.targets)
+    train_set.targets = torch.tensor(train_set.targets)
+    test_set.targets = torch.tensor(test_set.targets)
 
     for i in range(3):
         if (i+1)*90 == degree_to_replace:
             pass
         else:
-            data_new = torch.load('mnist_data_rotated_{}.pt'.format(90*(i+1)))
-            train_set.data = torch.cat((train_set.data, data_new.data),0)
+            data_new = torch.load('{}_data_rotated_{}.pt'.format(dataset_name,90*(i+1)))
+            if isinstance(data_new.data, type(torch.tensor([]))):
+                train_set.data = torch.cat((train_set.data, data_new.data), 0)
+            else:
+                train_set.data = np.vstack((train_set.data, data_new.data))
             train_set.targets = torch.cat((train_set.targets, data_new.targets), 0)
-            data_new = torch.load('mnist_test_data_rotated_{}.pt'.format(90*(i+1)))
-            test_set.data = torch.cat((test_set.data, data_new.data), 0)
+            data_new = torch.load('{}_test_data_rotated_{}.pt'.format(dataset_name,90*(i+1)))
+            if isinstance(data_new.data, type(torch.tensor([]))):
+                test_set.data = torch.cat((test_set.data, data_new.data), 0)
+            else:
+                test_set.data = np.vstack((test_set.data, data_new.data))
             test_set.targets = torch.cat((test_set.targets, data_new.targets), 0)
 
-    data_rotated = torch.load('mnist_data_rotated_{}.pt'.format(degree_to_replace))
+    data_rotated = torch.load('{}_data_rotated_{}.pt'.format(dataset_name,degree_to_replace))
     data_rotated_original = copy.deepcopy(data_rotated)
     indexes = np.random.choice(len(train_set.targets), len(data_rotated.targets), replace=False)
-    data_rotated.data = torch.cat((data_rotated.data, train_set.data[indexes]), 0)
-    data_rotated.targets = torch.cat((torch.ones(len(data_rotated.targets)), torch.zeros(len(data_rotated.targets))), 0)
+
+    train_set.data = train_set.data[indexes]
+    train_set.targets = train_set.targets[indexes]
+
+
+    indexes_train = np.random.choice(len(indexes), int(len(indexes)*0.8), replace=False)
+    indexes_test = list(set(range(len(indexes)))-set(indexes_train))
+
+    data_rotated_train = copy.deepcopy(data_rotated)
+    data_rotated_test = copy.deepcopy(data_rotated)
+
+
+    # data_rotated.data = torch.cat((data_rotated.data, train_set.data[indexes]), 0)
+    if isinstance(data_rotated.data, type(torch.tensor([]))):
+        data_rotated_train.data = torch.cat((data_rotated.data[indexes_train], train_set.data[indexes_train]), 0)
+        data_rotated_test.data = torch.cat((data_rotated.data[indexes_test], train_set.data[indexes_test]), 0)
+    else:
+        data_rotated_train.data = np.vstack((data_rotated.data[indexes_train], train_set.data[indexes_train]))
+        data_rotated_test.data = np.vstack((data_rotated.data[indexes_test], train_set.data[indexes_test]))
+    data_rotated_train.targets = torch.cat((torch.ones(len(indexes_train)), torch.zeros(len(indexes_train))), 0)
+    data_rotated_test.targets = torch.cat((torch.ones(len(indexes_test)), torch.zeros(len(indexes_test))), 0)
+
 
     loader_args = {'num_workers': 0, 'pin_memory': False}
 
     def _init_fn(worker_id):
         np.random.seed(int(seed))
 
-    train_loader = torch.utils.data.DataLoader(train_set, batch_size=20, shuffle=shuffle,
+    dis_loader = torch.utils.data.DataLoader(data_rotated_train, batch_size=batch_size, shuffle=shuffle,
                                                worker_init_fn=_init_fn if seed is not None else None, **loader_args)
-    dis_loader = torch.utils.data.DataLoader(data_rotated, batch_size=batch_size, shuffle=shuffle,
-                                               worker_init_fn=_init_fn if seed is not None else None, **loader_args)
-    test_loader = torch.utils.data.DataLoader(data_rotated_original, batch_size=batch_size, shuffle=shuffle,
+    dis_test_loader = torch.utils.data.DataLoader(data_rotated_test, batch_size=batch_size, shuffle=shuffle,
                                              worker_init_fn=_init_fn if seed is not None else None, **loader_args)
 
-    return train_loader, dis_loader, test_loader
+    return dis_loader, dis_test_loader
 
 def get_loaders(dataset_name, class_to_replace: int = None, num_indexes_to_replace: int = None,
                 indexes_to_replace: List[int] = None, seed: int = 1, only_mark: bool = False, root: str = './datasets',
@@ -541,6 +565,8 @@ def get_roated_loader(dataset_name, degree_to_replace: int = None, num_indexes_t
     if root is None:
         root = os.path.expanduser('~/data')
     train_set, test_set = _DATASETS[dataset_name](root, **dataset_kwargs)
+    train_set.targets = torch.tensor(train_set.targets)
+    test_set.targets = torch.tensor(test_set.targets)
     # subset_size = 15000
     # indices = np.random.choice(len(train_set.targets), subset_size, replace=False)
     # for i in range(3):
@@ -548,9 +574,12 @@ def get_roated_loader(dataset_name, degree_to_replace: int = None, num_indexes_t
     #     indices = list(set(indices)-set(indexes))
     #     tep = copy.deepcopy(train_set)
     #     tep.data = train_set.data[indexes]
-    #     tep.data = torch.rot90(tep.data, i+1, [1,2])
+    #     if isinstance(tep.data, type(torch.tensor([]))):
+    #         tep.data = torch.rot90(tep.data, i+1, [1,2])
+    #     else:
+    #         tep.data = np.rot90(tep.data, i + 1, (1, 2))
     #     tep.targets = train_set.targets[indexes]
-    #     torch.save(tep, 'mnist_data_rotated_{}.pt'.format(90*(i+1)))
+    #     torch.save(tep, '{}_data_rotated_{}.pt'.format(dataset_name,90*(i+1)))
     # #
     # subset_size = 3000
     # indices = np.random.choice(len(test_set.targets), subset_size, replace=False)
@@ -559,22 +588,31 @@ def get_roated_loader(dataset_name, degree_to_replace: int = None, num_indexes_t
     #     indices = list(set(indices)-set(indexes))
     #     tep = copy.deepcopy(test_set)
     #     tep.data = test_set.data[indexes]
-    #     tep.data = torch.rot90(tep.data, i+1, [1, 2])
+    #     if isinstance(tep.data, type(torch.tensor([]))):
+    #         tep.data = torch.rot90(tep.data, i + 1, [1, 2])
+    #     else:
+    #         tep.data = np.rot90(tep.data, i + 1, (1, 2))
     #     tep.targets = test_set.targets[indexes]
-    #     torch.save(tep, 'mnist_test_data_rotated_{}.pt'.format(90*(i+1)))
+    #     torch.save(tep, '{}_test_data_rotated_{}.pt'.format(dataset_name, 90*(i+1)))
 
     for i in range(3):
         if (i+1)*90 == degree_to_replace:
             pass
         else:
-            data_new = torch.load('mnist_data_rotated_{}.pt'.format(90*(i+1)))
-            train_set.data = torch.cat((train_set.data, data_new.data),0)
+            data_new = torch.load('{}_data_rotated_{}.pt'.format(dataset_name,90*(i+1)))
+            if isinstance(data_new.data, type(torch.tensor([]))):
+                train_set.data = torch.cat((train_set.data, data_new.data),0)
+            else:
+                train_set.data = np.vstack((train_set.data, data_new.data))
             train_set.targets = torch.cat((train_set.targets, data_new.targets), 0)
-            data_new = torch.load('mnist_test_data_rotated_{}.pt'.format(90*(i+1)))
-            test_set.data = torch.cat((test_set.data, data_new.data), 0)
+            data_new = torch.load('{}_test_data_rotated_{}.pt'.format(dataset_name,90*(i+1)))
+            if isinstance(data_new.data, type(torch.tensor([]))):
+                test_set.data = torch.cat((test_set.data, data_new.data), 0)
+            else:
+                test_set.data = np.vstack((test_set.data, data_new.data))
             test_set.targets = torch.cat((test_set.targets, data_new.targets), 0)
 
-    valid_set = torch.load('mnist_data_rotated_{}.pt'.format(degree_to_replace))
+    valid_set = torch.load('{}_data_rotated_{}.pt'.format(dataset_name,degree_to_replace))
 
     # train_set.targets = np.array(train_set.targets)
     # test_set.targets = np.array(test_set.targets)
