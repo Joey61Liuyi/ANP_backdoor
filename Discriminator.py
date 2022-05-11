@@ -8,18 +8,21 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, RandomSampler
 from torchvision.datasets import CIFAR10
-from datasets import get_loaders, get_dis_loaders, get_dis_ratated_loaders, get_roated_loader
+from datasets import get_loaders, get_dis_loaders, get_dis_ratated_loaders, get_roated_loader, get_small_roated_loader
 import torchvision.transforms as transforms
-
+import wandb
 import models
 import data.poison_cifar as poison
 
 parser = argparse.ArgumentParser(description='Train poisoned networks')
 
+data_num = 500
+obj_acc = 0.32
+
 # Basic model parameters.
 parser.add_argument('--arch', type=str, default='resnet18',
                     choices=['resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152', 'MobileNetV2', 'vgg19_bn'])
-parser.add_argument('--checkpoint', type=str, default='./unlearning_rotate_full/model_last.th', help='The checkpoint to be pruned')
+parser.add_argument('--checkpoint', type=str, default='./unlearning_rotate_small_{}/model_last.th'.format(data_num), help='The checkpoint to be pruned')
 parser.add_argument('--widen-factor', type=int, default=1, help='widen_factor for WideResNet')
 parser.add_argument('--batch-size', type=int, default=128, help='the batch size for dataloader')
 parser.add_argument('--lr', type=float, default=0.2, help='the learning rate for mask optimization')
@@ -27,7 +30,7 @@ parser.add_argument('--nb-iter', type=int, default=2000, help='the number of ite
 parser.add_argument('--print-every', type=int, default=500, help='print results every few iterations')
 parser.add_argument('--data-dir', type=str, default='../data', help='dir to the dataset')
 parser.add_argument('--val-frac', type=float, default=0.01, help='The fraction of the validate set')
-parser.add_argument('--output-dir', type=str, default='./unlearning_rotate_full/')
+parser.add_argument('--output-dir', type=str, default='./unlearning_rotate_full_all_remove90/')
 parser.add_argument('--trigger-info', type=str, default='./unlearning_rotate_full/trigger_info.th', help='The information of backdoor trigger')
 parser.add_argument('--poison-type', type=str, default='benign', choices=['badnets', 'blend', 'clean-label', 'benign'],
                     help='type of backdoor attacks for evaluation')
@@ -54,10 +57,18 @@ def weights_init_normal(m):
 
 def main():
 
+    wandb.init(project="Unlearning", name="Trail")
+
+
     # Step 1: create dataset - clean val set, poisoned test set, and clean test set.
     unlearning_class = 90
-    dis_loader, dis_test_loader = get_dis_ratated_loaders('cifar10', unlearning_class)
-    r_set_loader, u_set_loader, full_test_loader = get_roated_loader('cifar10', 90)
+    # dis_loader, dis_test_loader = get_dis_ratated_loaders('cifar10', unlearning_class)
+    # train_loader, test_loader, r_set_loaders, _ = get_roated_loader('cifar10')
+
+    unrotated_loader, rotated_loader, full_loader, dis_loader = get_small_roated_loader('cifar10', data_num=data_num)
+    # u_set_loader = r_set_loaders[0]
+    # r_set_loader1 = r_set_loaders[1]
+    # r_set_loader2 = r_set_loaders[2]
 
     # _, clean_valid_loader, _ = get_loaders('cifar10', None)
     # fine_tuning_loader, _, _ = get_loaders('cifar10', unlearning_class)
@@ -79,20 +90,24 @@ def main():
     d_optimizer = torch.optim.SGD(discriminator.parameters(), lr=0.05, momentum=0.9)
     dis_scheduler = torch.optim.lr_scheduler.MultiStepLR(d_optimizer, milestones=[25, 35], gamma=0.25)
 
-    mask_loss = torch.nn.CrossEntropyLoss().to(device)
-    mask_loss.cuda()
+    mask_loss1 = torch.nn.CrossEntropyLoss().to(device)
+    mask_loss2 = torch.nn.MSELoss().to(device)
     parameters = list(net.named_parameters())
     mask_params = [v for n, v in parameters if "neuron_mask" in n]
-    mask_optimizer = torch.optim.SGD(mask_params, lr=0.5, momentum=0.9)
+    mask_optimizer = torch.optim.SGD(mask_params, lr=2, momentum=0.9)
     mask_scheduler = torch.optim.lr_scheduler.MultiStepLR(mask_optimizer, milestones=[100, 150], gamma=0.5)
 
+    other_params = [v for n, v in parameters if "neuron_mask" not in n]
     criterion = torch.nn.CrossEntropyLoss().to(device)
-    fine_tuning_optimizer = torch.optim.SGD(mask_params, lr=0.001, momentum=0.9)
-    fine_tuning_scheduler = torch.optim.lr_scheduler.MultiStepLR(mask_optimizer, milestones=[25, 35], gamma=0.5)
+    fine_tuning_optimizer = torch.optim.SGD(other_params, lr=0.01, momentum=0.9)
+    fine_tuning_scheduler = torch.optim.lr_scheduler.MultiStepLR(mask_optimizer, milestones=[100, 150], gamma=0.5)
 
     original_loss, original_acc = 0,0
-
-
+    #
+    # r1_set_loss, r1_set_acc = test(model=net, criterion=criterion, data_loader=r_set_loader1)
+    # r2_set_loss, r2_set_acc = test(model=net, criterion=criterion, data_loader=r_set_loader2)
+    # r0_set_loss, r0_set_acc = test(model=net, criterion=criterion, data_loader=train_loader)
+    # u_set_loss, u_set_acc = test(model=net, criterion=criterion, data_loader=u_set_loader)
     # Step 3: trai n backdoored models
     # print('Iter \t lr \t Time \t DissLoss \t DissACC \t MaskLoss_target \t MaskACC_target \t CleanLoss \t CleanACC')
 
@@ -100,10 +115,10 @@ def main():
         d_lr = d_optimizer.param_groups[0]['lr']
         dis_loss, dis_acc = discriminator_train(model=net, discriminator=discriminator, criterion=auxiliary_loss,
                                                 data_loader=dis_loader,
-                                                dis_opt=d_optimizer, dis_scheduler= dis_scheduler, target_label=unlearning_class, step=63)
-        dis_loss_test, dis_acc_test = discriminator_test(model=net, discriminator=discriminator, criterion=auxiliary_loss,
-                                                data_loader=dis_test_loader)
-
+                                                dis_opt=d_optimizer, dis_scheduler= dis_scheduler, target_label=unlearning_class, step=len(dis_loader))
+        # dis_loss_test, dis_acc_test = discriminator_test(model=net, discriminator=discriminator, criterion=auxiliary_loss,
+        #                                         data_loader=dis_test_loader)
+        dis_loss_test, dis_acc_test = 0,0
 
         print('Epoch {}, D_lr: {:.4f}, Discriminator performance: Train loss: {:.4f}, Train ACC: {:.2f}%, Test loss: {:.4f}, Test ACC: {:.2f}%'.format(i+1,d_lr,dis_loss, 100*dis_acc, dis_loss_test, 100*dis_acc_test))
 
@@ -115,18 +130,30 @@ def main():
         mask_lr = mask_optimizer.param_groups[0]['lr']
         lr = fine_tuning_optimizer.param_groups[0]['lr']
         dis_loss, dis_acc = discriminator_train(model=net, discriminator=discriminator, criterion=auxiliary_loss, data_loader=dis_loader,dis_scheduler=dis_scheduler,
-                                           dis_opt=d_optimizer, target_label=unlearning_class, step=63)
-        dis_loss_test, dis_acc_test = discriminator_test(model=net, discriminator=discriminator,
-                                                         criterion=auxiliary_loss,
-                                                         data_loader=dis_test_loader)
+                                           dis_opt=d_optimizer, target_label=unlearning_class, step=len(dis_loader))
+        # dis_loss_test, dis_acc_test = discriminator_test(model=net, discriminator=discriminator,
+        #                                                  criterion=auxiliary_loss,
+        #                                                  data_loader=dis_test_loader)
 
-        mask_train_loss = mask_train(model=net,  discriminator=discriminator, criterion=mask_loss, data_loader=u_set_loader, mask_opt=mask_optimizer, target_label=unlearning_class, mask_scheduler = mask_scheduler, step=40)
-        # original_loss, original_acc = fine_tuning_train(model = net, criterion = criterion, data_loader = poison_train_loader, opt = fine_tuning_optimizer, scheduler=fine_tuning_scheduler, step=1)
+        mask_train_loss = mask_train(model=net,  discriminator=discriminator, criterion1=mask_loss1, criterion2=mask_loss2, lamb=0, data_loader=rotated_loader, mask_opt=mask_optimizer, target_label=unlearning_class, mask_scheduler = mask_scheduler, step=len(rotated_loader))
+        r_set_loss, r_set_acc = fine_tuning_train(model = net, criterion = criterion, data_loader = unrotated_loader, opt = fine_tuning_optimizer, scheduler=fine_tuning_scheduler, step=len(unrotated_loader))
 
         # cl_test_loss, cl_test_acc = test(model=net, criterion=criterion, data_loader=test_loader)
-        r_set_loss, r_set_acc = test(model=net, criterion=criterion, data_loader=r_set_loader)
-        u_set_loss, u_set_acc = test(model=net, criterion=criterion, data_loader=u_set_loader)
+        # r1_set_loss, r1_set_acc = test(model=net, criterion=criterion, data_loader=r_set_loader1)
+        # r2_set_loss, r2_set_acc = test(model=net, criterion=criterion, data_loader=r_set_loader2)
+        # r0_set_loss, r0_set_acc = test(model=net, criterion=criterion, data_loader=train_loader)
+        u_set_loss, u_set_acc = test(model=net, criterion=criterion, data_loader=rotated_loader)
+        r_set_loss, r_set_acc = test(model=net, criterion=criterion, data_loader=unrotated_loader)
 
+        info = {
+            "epoch": i+1,
+            "r_set_acc": r_set_acc,
+            # "r2_set_acc": r2_set_acc,
+            # "r0_set_acc": r0_set_acc,
+            "u_set_acc": u_set_acc
+
+        }
+        wandb.log(info)
         end = time.time()
         # print('{} \t {:.3f} \t {:.1f} \t {:.4f} \t {:.4f} \t {:.4f} \t {:.4f} \t {:.4f} \t {:.4f}\t {:.4f}\t {:.4f}\t'.format(
         #     (i + 1), lr, end - start, dis_loss, dis_acc, mask_train_loss, 0,
@@ -135,10 +162,23 @@ def main():
 
         print('Discriminator, lr: {:.4f}, Train loss: {:.4f}, Train ACC: {:.2f}%, Test loss: {:.4f}, Test ACC: {:.2f}%'.format(d_lr, dis_loss, 100 * dis_acc, dis_loss_test, 100 * dis_acc_test))
         print("Mask: lr: {:.4f}, Train loss: {:.4f}".format(mask_lr, mask_train_loss))
-        print("Model: lr: {:.4f}, U-set loss: {:.4f}, U-set ACC: {:.2f}%, R-set loss: {:.4f}, R-set ACC: {:.2f}%".format(lr, u_set_loss,u_set_acc*100,r_set_loss,r_set_acc*100))
-
-        if u_set_acc <= 0.41:
+        print("Model: lr: {:.4f}, U-set loss: {:.4f}, U-set ACC: {:.2f}%, R0-set loss: {:.4f}, R0-set ACC: {:.2f}%".format(lr, u_set_loss,u_set_acc*100,r_set_loss,r_set_acc*100))
+        # print("R1-set loss: {:.4f}, R1-set ACC: {:.2f}%, R2-set loss: {:.4f}, R2-set ACC: {:.2f}%".format(r1_set_loss, r1_set_acc * 100, r2_set_loss, r2_set_acc * 100))
+        if u_set_acc <= obj_acc:
             break
+
+    # for i in range(5):
+    #     r_set_loss, r_set_acc = fine_tuning_train(model=net, criterion=criterion, data_loader=r_set_loader,
+    #                                               opt=fine_tuning_optimizer, scheduler=fine_tuning_scheduler, step=10)
+    #     u_set_loss, u_set_acc = test(model=net, criterion=criterion, data_loader=u_set_loader)
+    #     print("***********************************Epoch {}***************************************************".format(
+    #         i + 1))
+    #     print("Model: lr: {:.4f}, U-set loss: {:.4f}, U-set ACC: {:.2f}%, R-set loss: {:.4f}, R-set ACC: {:.2f}%".format(lr,
+    #                                                                                                                      u_set_loss,
+    #                                                                                                                      u_set_acc * 100,
+    #                                                                                                                      r_set_loss,
+    #                                                                                                                      r_set_acc * 100))
+
     torch.save(discriminator.state_dict(), os.path.join(args.output_dir, 'discriminator.pt'))
     save_mask_scores(net.state_dict(), os.path.join(args.output_dir, 'mask_values.txt'))
 
@@ -263,17 +303,18 @@ def discriminator_test(model, discriminator, criterion, data_loader):
     return loss, acc
 
 
-def mask_train(model, discriminator, criterion, mask_opt, data_loader, target_label, mask_scheduler, step):
+def mask_train(model, discriminator, criterion1, criterion2, lamb, mask_opt, data_loader, target_label, mask_scheduler, step):
     discriminator.eval()
     model.train()
     total_loss = 0.0
-    # operator = nn.Softmax(dim=1)
+    operator = nn.Softmax(dim=1)
     for i in range(step):
         images, labels = next(iter(data_loader))
         images = images.to(device)
-        labels = torch.zeros(labels.shape[0])
+        labels = torch.ones(labels.shape[0])
         # labels = operator(labels)
         labels = labels.detach().to(device, dtype = torch.long)
+        # labels = operator(labels)
         mask_opt.zero_grad()
         #
         # # step 1: calculate the adversarial perturbation for neurons
@@ -302,7 +343,10 @@ def mask_train(model, discriminator, criterion, mask_opt, data_loader, target_la
         # exclude_noise(model)
         feature, output_clean = model(images)
         pred = discriminator(feature)
-        loss_mask = criterion(pred, labels)
+        loss_mask = criterion1(pred, labels)
+        logits = torch.ones(output_clean.shape).cuda()
+        logits = operator(logits)
+        loss_mask = lamb*criterion1(pred, labels)+(1-lamb)*criterion2(output_clean, logits)
         total_loss += loss_mask.item()
         loss_mask.backward()
         mask_opt.step()

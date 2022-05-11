@@ -414,21 +414,21 @@ def get_dis_ratated_loaders(dataset_name, degree_to_replace: int = None, num_ind
         if (i+1)*90 == degree_to_replace:
             pass
         else:
-            data_new = torch.load('{}_data_rotated_{}.pt'.format(dataset_name,90*(i+1)))
+            data_new = torch.load('{}_data_all_rotated_{}.pt'.format(dataset_name,90*(i+1)))
             if isinstance(data_new.data, type(torch.tensor([]))):
                 train_set.data = torch.cat((train_set.data, data_new.data), 0)
             else:
                 train_set.data = np.vstack((train_set.data, data_new.data))
             train_set.targets = torch.cat((train_set.targets, data_new.targets), 0)
-            data_new = torch.load('{}_test_data_rotated_{}.pt'.format(dataset_name,90*(i+1)))
+            data_new = torch.load('{}_test_data_all_rotated_{}.pt'.format(dataset_name,90*(i+1)))
             if isinstance(data_new.data, type(torch.tensor([]))):
                 test_set.data = torch.cat((test_set.data, data_new.data), 0)
             else:
                 test_set.data = np.vstack((test_set.data, data_new.data))
             test_set.targets = torch.cat((test_set.targets, data_new.targets), 0)
 
-    data_rotated = torch.load('{}_data_rotated_{}.pt'.format(dataset_name,degree_to_replace))
-    data_rotated_original = copy.deepcopy(data_rotated)
+    data_rotated = torch.load('{}_data_all_rotated_{}.pt'.format(dataset_name,degree_to_replace))
+    # data_rotated_original = copy.deepcopy(data_rotated)
     indexes = np.random.choice(len(train_set.targets), len(data_rotated.targets), replace=False)
 
     train_set.data = train_set.data[indexes]
@@ -542,7 +542,7 @@ def get_loaders(dataset_name, class_to_replace: int = None, num_indexes_to_repla
     return train_loader, valid_loader, test_loader
 
 def get_roated_loader(dataset_name, degree_to_replace: int = None, num_indexes_to_replace: int = None,
-                indexes_to_replace: List[int] = None, seed: int = 1, only_mark: bool = False, root: str = './datasets',
+                seed: int = 1, only_mark: bool = False, root: str = './datasets',
                 batch_size=128, shuffle=True,
                 **dataset_kwargs):
     '''
@@ -567,52 +567,57 @@ def get_roated_loader(dataset_name, degree_to_replace: int = None, num_indexes_t
     train_set, test_set = _DATASETS[dataset_name](root, **dataset_kwargs)
     train_set.targets = torch.tensor(train_set.targets)
     test_set.targets = torch.tensor(test_set.targets)
+    full_set = copy.deepcopy(train_set)
     # subset_size = 15000
     # indices = np.random.choice(len(train_set.targets), subset_size, replace=False)
     # for i in range(3):
-    #     indexes = np.random.choice(indices, 5000, replace=False)
-    #     indices = list(set(indices)-set(indexes))
+    #     # indexes = np.random.choice(indices, 5000, replace=False)
+    #     # indices = list(set(indices)-set(indexes))
     #     tep = copy.deepcopy(train_set)
-    #     tep.data = train_set.data[indexes]
+    #     # tep.data = train_set.data[indexes]
     #     if isinstance(tep.data, type(torch.tensor([]))):
     #         tep.data = torch.rot90(tep.data, i+1, [1,2])
     #     else:
     #         tep.data = np.rot90(tep.data, i + 1, (1, 2))
-    #     tep.targets = train_set.targets[indexes]
-    #     torch.save(tep, '{}_data_rotated_{}.pt'.format(dataset_name,90*(i+1)))
+    #     # tep.targets = train_set.targets[indexes]
+    #     torch.save(tep, '{}_data_all_rotated_{}.pt'.format(dataset_name,90*(i+1)))
     # #
-    # subset_size = 3000
-    # indices = np.random.choice(len(test_set.targets), subset_size, replace=False)
+    # # subset_size = 3000
+    # # indices = np.random.choice(len(test_set.targets), subset_size, replace=False)
     # for i in range(3):
-    #     indexes = np.random.choice(indices, 1000, replace=False)
-    #     indices = list(set(indices)-set(indexes))
+    #     # indexes = np.random.choice(indices, 1000, replace=False)
+    #     # indices = list(set(indices)-set(indexes))
     #     tep = copy.deepcopy(test_set)
-    #     tep.data = test_set.data[indexes]
+    #     # tep.data = test_set.data[indexes]
     #     if isinstance(tep.data, type(torch.tensor([]))):
     #         tep.data = torch.rot90(tep.data, i + 1, [1, 2])
     #     else:
     #         tep.data = np.rot90(tep.data, i + 1, (1, 2))
-    #     tep.targets = test_set.targets[indexes]
-    #     torch.save(tep, '{}_test_data_rotated_{}.pt'.format(dataset_name, 90*(i+1)))
+    #     # tep.targets = test_set.targets[indexes]
+    #     torch.save(tep, '{}_test_data_all_rotated_{}.pt'.format(dataset_name, 90*(i+1)))
 
     for i in range(3):
-        if (i+1)*90 == degree_to_replace:
+        if i == 0:
             pass
         else:
-            data_new = torch.load('{}_data_rotated_{}.pt'.format(dataset_name,90*(i+1)))
+            data_new = torch.load('{}_data_all_rotated_{}.pt'.format(dataset_name,90*(i+1)))
             if isinstance(data_new.data, type(torch.tensor([]))):
-                train_set.data = torch.cat((train_set.data, data_new.data),0)
+                full_set.data = torch.cat((full_set.data, data_new.data),0)
             else:
-                train_set.data = np.vstack((train_set.data, data_new.data))
-            train_set.targets = torch.cat((train_set.targets, data_new.targets), 0)
-            data_new = torch.load('{}_test_data_rotated_{}.pt'.format(dataset_name,90*(i+1)))
+                full_set.data = np.vstack((full_set.data, data_new.data))
+            full_set.targets = torch.cat((full_set.targets, data_new.targets), 0)
+            data_new = torch.load('{}_test_data_all_rotated_{}.pt'.format(dataset_name,90*(i+1)))
             if isinstance(data_new.data, type(torch.tensor([]))):
                 test_set.data = torch.cat((test_set.data, data_new.data), 0)
             else:
                 test_set.data = np.vstack((test_set.data, data_new.data))
             test_set.targets = torch.cat((test_set.targets, data_new.targets), 0)
 
-    valid_set = torch.load('{}_data_rotated_{}.pt'.format(dataset_name,degree_to_replace))
+    r_set_loader = []
+
+    # valid_set = torch.load('{}_data_rotated_{}.pt'.format(dataset_name,degree_to_replace))
+    # r_set_1 = torch.load('{}_data_rotated_{}.pt'.format(dataset_name, 180))
+    # r_set_2 = torch.load('{}_data_rotated_{}.pt'.format(dataset_name, 270))
 
     # train_set.targets = np.array(train_set.targets)
     # test_set.targets = np.array(test_set.targets)
@@ -622,14 +627,114 @@ def get_roated_loader(dataset_name, degree_to_replace: int = None, num_indexes_t
     def _init_fn(worker_id):
         np.random.seed(int(seed))
 
+    for i in range(3):
+        data_tep = torch.load('{}_data_all'
+                              '_rotated_{}.pt'.format(dataset_name,90*(i+1)))
+        r_set_loader.append(torch.utils.data.DataLoader(data_tep, batch_size=batch_size, shuffle=shuffle,
+                                               worker_init_fn=_init_fn if seed is not None else None, **loader_args))
+
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=shuffle,
                                                worker_init_fn=_init_fn if seed is not None else None, **loader_args)
-    valid_loader = torch.utils.data.DataLoader(valid_set, batch_size=batch_size, shuffle=False,
-                                               worker_init_fn=_init_fn if seed is not None else None, **loader_args)
+    # valid_loader = torch.utils.data.DataLoader(valid_set, batch_size=batch_size, shuffle=False,
+    #                                            worker_init_fn=_init_fn if seed is not None else None, **loader_args)
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=False,
                                               worker_init_fn=_init_fn if seed is not None else None, **loader_args)
+    # r_set_loader1 = torch.utils.data.DataLoader(valid_set, batch_size=batch_size, shuffle=False,
+    #                                            worker_init_fn=_init_fn if seed is not None else None, **loader_args)
+    # r_set_loader2 = torch.utils.data.DataLoader(valid_set, batch_size=batch_size, shuffle=False,
+    #                                            worker_init_fn=_init_fn if seed is not None else None, **loader_args)
+    full_loader = torch.utils.data.DataLoader(full_set, batch_size=batch_size, shuffle=True,
+                                              worker_init_fn=_init_fn if seed is not None else None, **loader_args)
 
-    return train_loader, valid_loader, test_loader
+
+
+
+    return train_loader,  test_loader, r_set_loader, full_loader
+
+
+def get_small_roated_loader(dataset_name, data_num: int = 5000,
+                seed: int = 1, only_mark: bool = False, root: str = './datasets',
+                batch_size=128, shuffle=True,
+                **dataset_kwargs):
+    '''
+
+    :param dataset_name: Name of dataset to use
+    :param class_to_replace: If not None, specifies which class to replace completely or partially
+    :param num_indexes_to_replace: If None, all samples from `class_to_replace` are replaced. Else, only replace
+                                   `num_indexes_to_replace` samples
+    :param indexes_to_replace: If not None, denotes the indexes of samples to replace. Only one of class_to_replace and
+                               indexes_to_replace can be specidied.
+    :param seed: Random seed to sample the samples to replace and to initialize the data loaders so that they sample
+                 always in the same order
+    :param root: Root directory to initialize the dataset
+    :param batch_size: Batch size of data loader
+    :param shuffle: Whether train data should be randomly shuffled when loading (test data are never shuffled)
+    :param dataset_kwargs: Extra arguments to pass to the dataset init.
+    :return: The train_loader and test_loader
+    '''
+    manual_seed(seed)
+    if root is None:
+        root = os.path.expanduser('~/data')
+    train_set, test_set = _DATASETS[dataset_name](root, **dataset_kwargs)
+    train_set.targets = torch.tensor(train_set.targets)
+    test_set.targets = torch.tensor(test_set.targets)
+
+    fname = '{}_{}_data_small_rotated.pt'.format(dataset_name,data_num)
+    if not os.path.isfile(fname):
+        indices = np.random.choice(len(train_set.targets), data_num, replace=False)
+        tep = copy.deepcopy(train_set)
+        tep.data = train_set.data[indices]
+        if isinstance(tep.data, type(torch.tensor([]))):
+            tep.data = torch.rot90(tep.data, 1, [1,2])
+        else:
+            tep.data = np.rot90(tep.data, 1, (1, 2))
+        tep.targets = train_set.targets[indices]
+        torch.save(tep, '{}_{}_data_small_rotated.pt'.format(dataset_name,data_num))
+        rest_indexes = list(set(range(len(train_set)))-set(indices))
+        train_set.data = train_set.data[rest_indexes]
+        train_set.targets = train_set.targets[rest_indexes]
+        torch.save(train_set, '{}_{}_data_small_rest.pt'.format(dataset_name, data_num))
+
+    train_set = torch.load('{}_{}_data_small_rest.pt'.format(dataset_name, data_num))
+    data_new = torch.load('{}_{}_data_small_rotated.pt'.format(dataset_name, data_num))
+
+    full_set = copy.deepcopy(train_set)
+    if isinstance(full_set.data, type(torch.tensor([]))):
+        full_set.data = torch.cat((full_set.data, data_new.data), 0)
+    else:
+        full_set.data = np.vstack((full_set.data, data_new.data))
+    full_set.targets = torch.cat((full_set.targets, data_new.targets), 0)
+
+    dis_set = copy.deepcopy(data_new)
+    indices = np.random.choice(len(train_set.targets), len(data_new), replace=False)
+    if isinstance(dis_set.data, type(torch.tensor([]))):
+        dis_set.data = torch.cat((dis_set.data, train_set.data[indices]), 0)
+    else:
+        dis_set.data = np.vstack((dis_set.data, train_set.data[indices]))
+    dis_set.targets = torch.cat((torch.zeros(len(data_new)), torch.ones(len(indices))), 0)
+
+    rng = np.random.RandomState(seed)
+    loader_args = {'num_workers': 0, 'pin_memory': False}
+
+    def _init_fn(worker_id):
+        np.random.seed(int(seed))
+
+    unrotated_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=shuffle,
+                                               worker_init_fn=_init_fn if seed is not None else None, **loader_args)
+    # valid_loader = torch.utils.data.DataLoader(valid_set, batch_size=batch_size, shuffle=False,
+    #                                            worker_init_fn=_init_fn if seed is not None else None, **loader_args)
+    rotated_loader = torch.utils.data.DataLoader(data_new, batch_size=batch_size, shuffle=False,
+                                              worker_init_fn=_init_fn if seed is not None else None, **loader_args)
+
+    full_loader = torch.utils.data.DataLoader(full_set, batch_size=batch_size, shuffle=True,
+                                              worker_init_fn=_init_fn if seed is not None else None, **loader_args)
+    dis_loader = torch.utils.data.DataLoader(dis_set, batch_size=batch_size, shuffle=True,
+                                              worker_init_fn=_init_fn if seed is not None else None, **loader_args)
+
+
+
+
+    return unrotated_loader, rotated_loader, full_loader, dis_loader
 
 
 if __name__ == '__main__':

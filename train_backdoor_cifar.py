@@ -7,10 +7,13 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision.datasets import CIFAR10
 import torchvision.transforms as transforms
-from datasets import get_loaders, get_roated_loader
+from datasets import get_loaders, get_roated_loader, get_small_roated_loader
 
 import models
 import data.poison_cifar as poison
+
+data_num = 500
+retrain = True
 
 parser = argparse.ArgumentParser(description='Train poisoned networks')
 
@@ -24,7 +27,10 @@ parser.add_argument('--schedule', type=int, nargs='+', default=[25, 35],
                     help='Decrease learning rate at   these epochs.')
 parser.add_argument('--save-every', type=int, default=20, help='save checkpoints every few epochs')
 parser.add_argument('--data-dir', type=str, default='../data', help='dir to the dataset')
-parser.add_argument('--output-dir', type=str, default='./unlearning_rotate_full/')
+if retrain:
+    parser.add_argument('--output-dir', type=str, default='./unlearning_rotate_retrain_small_{}/'.format(data_num))
+else:
+    parser.add_argument('--output-dir', type=str, default='./unlearning_rotate_small_{}/'.format(data_num))
 # backdoor parameters
 parser.add_argument('--clb-dir', type=str, default='', help='dir to training data under clean label attack')
 parser.add_argument('--poison-type', type=str, default='benign', choices=['badnets', 'blend', 'clean-label', 'benign'],
@@ -99,7 +105,8 @@ def main():
     # poison_test_loader = DataLoader(poison_test, batch_size=args.batch_size, num_workers=0)
     # clean_test_loader = DataLoader(clean_test, batch_size=args.batch_size, num_workers=0)
 
-    poison_train_loader, poison_test_loader, clean_test_loader  = get_roated_loader('cifar10', 90)
+    # train_loader,  test_loader, r_set_loader, full_loader  = get_roated_loader('cifar10', 90)
+    unrotated_loader, rotated_loader, full_loader, dis_loader = get_small_roated_loader('cifar10', data_num=data_num)
     # Step 2: prepare model, criterion, optimizer, and learning rate scheduler.
     net = getattr(models, args.arch)(num_classes=10).to(device)
     criterion = torch.nn.CrossEntropyLoss().to(device)
@@ -114,18 +121,34 @@ def main():
     for epoch in range(1, args.epoch):
         start = time.time()
         lr = optimizer.param_groups[0]['lr']
-        train_loss, train_acc = train(model=net, criterion=criterion, optimizer=optimizer,
-                                      data_loader=poison_train_loader)
-        cl_test_loss, cl_test_acc = test(model=net, criterion=criterion, data_loader=clean_test_loader)
-        po_test_loss = 0
-        po_test_acc = 0
-        po_test_loss, po_test_acc = test(model=net, criterion=criterion, data_loader=poison_test_loader)
+        if retrain:
+            train_loss, train_acc = train(model=net, criterion=criterion, optimizer=optimizer,
+                                      data_loader=unrotated_loader)
+        else:
+            train_loss, train_acc = train(model=net, criterion=criterion, optimizer=optimizer,
+                                          data_loader=full_loader)
+        r_loss, r_acc = test(model=net, criterion=criterion, data_loader=rotated_loader)
+        print("Epoch {}, full acc: {:.4f}%, R0 acc : {:.4f}%".format(epoch, 100*train_acc, 100*r_acc))
+
+        # if epoch % 10 ==0 or epoch >=45:
+        #     ro_loss, ro_acc = test(model=net, criterion=criterion, data_loader=r_set_loader[0])
+        #     r1_loss, r1_acc = test(model=net, criterion=criterion, data_loader=r_set_loader[1])
+        #     r2_loss, r2_acc = te st(model=net, criterion=criterion, data_loader=r_set_loader[2])
+        #     r3_loss, r3_acc = test(model=net, criterion=criterion, data_loader=train_loader)
+        #     print(
+        #         "Epoch {}, full acc: {:.4f}%, R0 acc : {:.4f}%, R1 acc : {:.4f}%, R2 acc : {:.4f}%, R3 acc : {:.4f}%".format(
+        #             epoch, train_acc, 100*ro_acc, 100*r1_acc, 100*r2_acc, 100*r3_acc))
+        # else:
+        #     print("Epoch {}, full acc: {:.4f}%".format(epoch, 100*train_acc))
+        # cl_test_loss, cl_test_acc = test(model=net, criterion=criterion, data_loader=r_set_loader[0])
+        # po_test_loss, po_test_acc = test(model=net, criterion=criterion, data_loader=poison_test_loader)
         scheduler.step()
         end = time.time()
-        logger.info(
-            '%d \t %.3f \t %.1f \t %.4f \t %.4f \t %.4f \t %.4f \t %.4f \t %.4f',
-            epoch, lr, end - start, train_loss, train_acc, po_test_loss, po_test_acc,
-            cl_test_loss, cl_test_acc)
+
+        # logger.info(
+        #     '%d \t %.3f \t %.1f \t %.4f \t %.4f \t %.4f \t %.4f \t %.4f \t %.4f',
+        #     epoch, lr, end - start, train_loss, train_acc, po_test_loss, po_test_acc,
+        #     cl_test_loss, cl_test_acc)
 
         if (epoch + 1) % args.save_every == 0:
             torch.save(net.state_dict(), os.path.join(args.output_dir, 'model_{}.th'.format(epoch)))

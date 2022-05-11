@@ -6,7 +6,7 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision.datasets import CIFAR10
 import torchvision.transforms as transforms
-from datasets import get_loaders
+from datasets import get_loaders, get_roated_loader
 
 import models
 import data.poison_cifar as poison
@@ -14,9 +14,9 @@ import data.poison_cifar as poison
 parser = argparse.ArgumentParser(description='Train poisoned networks')
 
 # Basic model parameters.
-parser.add_argument('--arch', type=str, default='vgg16_bn',
+parser.add_argument('--arch', type=str, default='resnet18',
                     choices=['resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152', 'MobileNetV2', 'vgg19_bn'])
-parser.add_argument('--checkpoint', type=str, default='./unlearning_full/model_last.th', help='The checkpoint to be pruned')
+parser.add_argument('--checkpoint', type=str, default='./unlearning_rotate_full/model_last.th', help='The checkpoint to be pruned')
 parser.add_argument('--widen-factor', type=int, default=1, help='widen_factor for WideResNet')
 parser.add_argument('--batch-size', type=int, default=128, help='the batch size for dataloader')
 parser.add_argument('--data-dir', type=str, default='../data', help='dir to the dataset')
@@ -28,10 +28,11 @@ parser.add_argument('--poison-type', type=str, default='benign', choices=['badne
 parser.add_argument('--poison-target', type=int, default=0, help='target class of backdoor attack')
 parser.add_argument('--trigger-alpha', type=float, default=1.0, help='the transparency of the trigger pattern.')
 
-parser.add_argument('--mask-file', type=str, default='./unlearning_6/mask_values.txt', help='The text file containing the mask values')
-parser.add_argument('--pruning-by', type=str, default='threshold', choices=['number', 'threshold'])
-parser.add_argument('--pruning-max', type=float, default=0.90, help='the maximum number/threshold for pruning')
-parser.add_argument('--pruning-step', type=float, default=0.05, help='the step size for evaluating the pruning')
+parser.add_argument('--mask-file', type=str, default='./unlearning_rotate_full/mask_values.txt', help='The text file containing the mask values')
+parser.add_argument('--pruning-by', type=str, default='number', choices=['number', 'threshold'])
+parser.add_argument('--pruning-max', type=float, default=2000, help='the maximum number/threshold for pruning')
+parser.add_argument('--pruning-step', type=float, default=10
+                    , help='the step size for evaluating the pruning')
 
 args = parser.parse_args()
 args_dict = vars(args)
@@ -43,8 +44,8 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 def main():
 
     # Step 1: create poisoned / clean test set
-    poison_train_loader, poison_test_loader, clean_test_loader  = get_loaders('cifar10', 6)
-
+    # poison_train_loader, poison_test_loader, clean_test_loader  = get_loaders('cifar10', 6)
+    r_set_loader, u_set_loader, full_test_loader = get_roated_loader('cifar10', 90)
     # Step 2: load model checkpoints and trigger info
     net = getattr(models, args.arch)(num_classes=10)
     net.load_state_dict(torch.load(args.checkpoint, map_location=device))
@@ -55,18 +56,18 @@ def main():
     mask_values = read_data(args.mask_file)
     mask_values = sorted(mask_values, key=lambda x: float(x[2]))
     print('No. \t Layer Name \t Neuron Idx \t Mask \t PoisonLoss \t PoisonACC \t CleanLoss \t CleanACC')
-    cl_loss, cl_acc = test(model=net, criterion=criterion, data_loader=poison_train_loader)
-    po_loss, po_acc = test(model=net, criterion=criterion, data_loader=poison_test_loader)
+    cl_loss, cl_acc = test(model=net, criterion=criterion, data_loader=r_set_loader)
+    po_loss, po_acc = test(model=net, criterion=criterion, data_loader=u_set_loader)
     print('0 \t None     \t None     \t {:.4f} \t {:.4f} \t {:.4f} \t {:.4f}'.format(po_loss, po_acc, cl_loss, cl_acc))
     if args.pruning_by == 'threshold':
         results = evaluate_by_threshold(
             net, mask_values, pruning_max=args.pruning_max, pruning_step=args.pruning_step,
-            criterion=criterion, clean_loader=poison_train_loader, poison_loader=poison_test_loader
+            criterion=criterion, clean_loader=r_set_loader, poison_loader=u_set_loader
         )
     else:
         results = evaluate_by_number(
             net, mask_values, pruning_max=args.pruning_max, pruning_step=args.pruning_step,
-            criterion=criterion, clean_loader=poison_train_loader, poison_loader=poison_test_loader
+            criterion=criterion, clean_loader=r_set_loader, poison_loader=u_set_loader
         )
     file_name = os.path.join(args.output_dir, 'pruning_by_{}.txt'.format(args.pruning_by))
     with open(file_name, "w") as f:
@@ -105,6 +106,8 @@ def evaluate_by_number(model, mask_values, pruning_max, pruning_step, criterion,
             i+1, layer_name, neuron_idx, value, po_loss, po_acc, cl_loss, cl_acc))
         results.append('{} \t {} \t {} \t {} \t {:.4f} \t {:.4f} \t {:.4f} \t {:.4f}'.format(
             i+1, layer_name, neuron_idx, value, po_loss, po_acc, cl_loss, cl_acc))
+        if po_acc <= 0.41:
+            break
     return results
 
 
