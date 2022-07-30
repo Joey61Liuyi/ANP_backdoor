@@ -7,14 +7,18 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision.datasets import CIFAR10
 import torchvision.transforms as transforms
-from datasets import get_loaders, get_roated_loader, get_small_roated_loader
+from datasets import get_loaders, get_roated_loader, prepare_mix_colored_loader, MNIST_colored, get_small_rotated_loader, get_augmentation_loader
 
 import models
 import data.poison_cifar as poison
-
-data_num = 500
+dataset = 'mnist'
+data_num = 5000
 retrain = True
-
+augment_list =['crop', 'flip', 'rotation', 'color_jitter']
+augment_list = [augment_list[3]]
+output_dir = './{}'.format(dataset)
+for one in augment_list:
+    output_dir += '_'+one
 parser = argparse.ArgumentParser(description='Train poisoned networks')
 
 # Basic model parameters.
@@ -27,10 +31,13 @@ parser.add_argument('--schedule', type=int, nargs='+', default=[25, 35],
                     help='Decrease learning rate at   these epochs.')
 parser.add_argument('--save-every', type=int, default=20, help='save checkpoints every few epochs')
 parser.add_argument('--data-dir', type=str, default='../data', help='dir to the dataset')
-if retrain:
-    parser.add_argument('--output-dir', type=str, default='./unlearning_rotate_retrain_small_{}/'.format(data_num))
-else:
-    parser.add_argument('--output-dir', type=str, default='./unlearning_rotate_small_{}/'.format(data_num))
+# if retrain:
+#     parser.add_argument('--output-dir', type=str, default='./unlearning_rotate_retrain_small_{}/'.format(data_num))
+# else:
+#     parser.add_argument('--output-dir', type=str, default='./unlearning_rotate_small_{}/'.format(data_num))
+
+p = 0
+parser.add_argument('--output-dir', type=str, default=output_dir)
 # backdoor parameters
 parser.add_argument('--clb-dir', type=str, default='', help='dir to training data under clean label attack')
 parser.add_argument('--poison-type', type=str, default='benign', choices=['badnets', 'blend', 'clean-label', 'benign'],
@@ -106,7 +113,10 @@ def main():
     # clean_test_loader = DataLoader(clean_test, batch_size=args.batch_size, num_workers=0)
 
     # train_loader,  test_loader, r_set_loader, full_loader  = get_roated_loader('cifar10', 90)
-    unrotated_loader, rotated_loader, full_loader, dis_loader = get_small_roated_loader('cifar10', data_num=data_num)
+    # train_loader = get_small_rotated_loader('cifar10', data_num=data_num)
+    # unrotated_loader, rotated_loader, full_loader, dis_loader = get_colored_mnist_loader('mnist_colored', data_num=2000)
+    # train_loader, test_loader = prepare_mix_colored_loader('mnist', p, p, 2000)
+    train_loader, test_loader = get_augmentation_loader(dataset, augment_list, batch_size=128)
     # Step 2: prepare model, criterion, optimizer, and learning rate scheduler.
     net = getattr(models, args.arch)(num_classes=10).to(device)
     criterion = torch.nn.CrossEntropyLoss().to(device)
@@ -121,13 +131,13 @@ def main():
     for epoch in range(1, args.epoch):
         start = time.time()
         lr = optimizer.param_groups[0]['lr']
-        if retrain:
-            train_loss, train_acc = train(model=net, criterion=criterion, optimizer=optimizer,
-                                      data_loader=unrotated_loader)
-        else:
-            train_loss, train_acc = train(model=net, criterion=criterion, optimizer=optimizer,
-                                          data_loader=full_loader)
-        r_loss, r_acc = test(model=net, criterion=criterion, data_loader=rotated_loader)
+
+        train_loss, train_acc = train(model=net, criterion=criterion, optimizer=optimizer,
+                                  data_loader=train_loader)
+        # else:
+        #     train_loss, train_acc = train(model=net, criterion=criterion, optimizer=optimizer,
+        #                                   data_loader=full_loader)
+        r_loss, r_acc = test(model=net, criterion=criterion, data_loader=test_loader)
         print("Epoch {}, full acc: {:.4f}%, R0 acc : {:.4f}%".format(epoch, 100*train_acc, 100*r_acc))
 
         # if epoch % 10 ==0 or epoch >=45:
@@ -163,6 +173,9 @@ def train(model, criterion, optimizer, data_loader):
     total_loss = 0.0
     for i, (images, labels) in enumerate(data_loader):
         images, labels = images.to(device), labels.to(device,  dtype = torch.long)
+        if len(labels.shape)==2:
+            labels, domain_label = torch.split(labels, 1, dim=1)
+            labels = labels.squeeze().long()
         optimizer.zero_grad()
         feature, output = model(images)
         loss = criterion(output, labels)
@@ -186,6 +199,9 @@ def test(model, criterion, data_loader):
     with torch.no_grad():
         for i, (images, labels) in enumerate(data_loader):
             images, labels = images.to(device), labels.to(device, dtype = torch.long)
+            if len(labels.shape)==2:
+                labels, domain_label = torch.split(labels, 1, dim=1)
+                labels = labels.squeeze().long()
             feature, output = model(images)
             total_loss += criterion(output, labels).item()
             pred = output.data.max(1)[1]

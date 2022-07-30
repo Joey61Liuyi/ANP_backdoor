@@ -8,21 +8,25 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, RandomSampler
 from torchvision.datasets import CIFAR10
-from datasets import get_loaders, get_dis_loaders, get_dis_ratated_loaders, get_roated_loader, get_small_roated_loader
+from datasets import get_loaders, get_dis_loaders, get_dis_ratated_loaders, get_roated_loader, get_small_rotated_loader, get_colored_mnist_loader
 import torchvision.transforms as transforms
 import wandb
+import matplotlib.pyplot as plt
 import models
 import data.poison_cifar as poison
 
 parser = argparse.ArgumentParser(description='Train poisoned networks')
 
-data_num = 500
-obj_acc = 0.32
+data_num = 1000
+obj_acc = 0.35
 
 # Basic model parameters.
 parser.add_argument('--arch', type=str, default='resnet18',
                     choices=['resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152', 'MobileNetV2', 'vgg19_bn'])
-parser.add_argument('--checkpoint', type=str, default='./unlearning_rotate_small_{}/model_last.th'.format(data_num), help='The checkpoint to be pruned')
+# parser.add_argument('--checkpoint', type=str, default='./unlearning_colored_{}/model_last.th'.format(data_num), help='The checkpoint to be pruned')
+
+parser.add_argument('--checkpoint', type=str, default='./colored_mnist_resnet18_rotation_full/model_last.th'.format(data_num), help='The checkpoint to be pruned')
+
 parser.add_argument('--widen-factor', type=int, default=1, help='widen_factor for WideResNet')
 parser.add_argument('--batch-size', type=int, default=128, help='the batch size for dataloader')
 parser.add_argument('--lr', type=float, default=0.2, help='the learning rate for mask optimization')
@@ -30,7 +34,7 @@ parser.add_argument('--nb-iter', type=int, default=2000, help='the number of ite
 parser.add_argument('--print-every', type=int, default=500, help='print results every few iterations')
 parser.add_argument('--data-dir', type=str, default='../data', help='dir to the dataset')
 parser.add_argument('--val-frac', type=float, default=0.01, help='The fraction of the validate set')
-parser.add_argument('--output-dir', type=str, default='./unlearning_rotate_full_all_remove90/')
+parser.add_argument('--output-dir', type=str, default='./uunlearning_colored/')
 parser.add_argument('--trigger-info', type=str, default='./unlearning_rotate_full/trigger_info.th', help='The information of backdoor trigger')
 parser.add_argument('--poison-type', type=str, default='benign', choices=['badnets', 'blend', 'clean-label', 'benign'],
                     help='type of backdoor attacks for evaluation')
@@ -54,18 +58,26 @@ def weights_init_normal(m):
         torch.nn.init.normal_(m.weight.data, 1.0, 0.02)
         torch.nn.init.constant_(m.bias.data, 0.0)
 
+def plot_mask(mask_param):
+    tep = []
+    for one in mask_param:
+        tep += list(one.cpu().detach().numpy())
+    # tep = np.array(tep)
+    # tep = tep.reshape(-1)
+    plt.hist(tep)
+    plt.show()
 
 def main():
 
-    wandb.init(project="Unlearning", name="Trail")
-
+    # wandb.init(project="Unlearning", name="colored")
 
     # Step 1: create dataset - clean val set, poisoned test set, and clean test set.
     unlearning_class = 90
     # dis_loader, dis_test_loader = get_dis_ratated_loaders('cifar10', unlearning_class)
     # train_loader, test_loader, r_set_loaders, _ = get_roated_loader('cifar10')
 
-    unrotated_loader, rotated_loader, full_loader, dis_loader = get_small_roated_loader('cifar10', data_num=data_num)
+    unrotated_loader, dis_loader = get_small_rotated_loader('cifar10', data_num=data_num)
+    # unrotated_loader, rotated_loader, full_loader, dis_loader = get_colored_mnist_loader('mnist_colored', data_num=2000)
     # u_set_loader = r_set_loaders[0]
     # r_set_loader1 = r_set_loaders[1]
     # r_set_loader2 = r_set_loaders[2]
@@ -129,6 +141,10 @@ def main():
         d_lr = d_optimizer.param_groups[0]['lr']
         mask_lr = mask_optimizer.param_groups[0]['lr']
         lr = fine_tuning_optimizer.param_groups[0]['lr']
+
+        u_set_loss, u_set_acc = test(model=net, criterion=criterion, data_loader=rotated_loader)
+        r_set_loss, r_set_acc = test(model=net, criterion=criterion, data_loader=unrotated_loader)
+
         dis_loss, dis_acc = discriminator_train(model=net, discriminator=discriminator, criterion=auxiliary_loss, data_loader=dis_loader,dis_scheduler=dis_scheduler,
                                            dis_opt=d_optimizer, target_label=unlearning_class, step=len(dis_loader))
         # dis_loss_test, dis_acc_test = discriminator_test(model=net, discriminator=discriminator,
@@ -136,14 +152,13 @@ def main():
         #                                                  data_loader=dis_test_loader)
 
         mask_train_loss = mask_train(model=net,  discriminator=discriminator, criterion1=mask_loss1, criterion2=mask_loss2, lamb=0, data_loader=rotated_loader, mask_opt=mask_optimizer, target_label=unlearning_class, mask_scheduler = mask_scheduler, step=len(rotated_loader))
-        r_set_loss, r_set_acc = fine_tuning_train(model = net, criterion = criterion, data_loader = unrotated_loader, opt = fine_tuning_optimizer, scheduler=fine_tuning_scheduler, step=len(unrotated_loader))
+        r_set_loss_, r_set_acc_ = fine_tuning_train(model = net, criterion = criterion, data_loader = unrotated_loader, opt = fine_tuning_optimizer, scheduler=fine_tuning_scheduler, step=len(unrotated_loader))
 
         # cl_test_loss, cl_test_acc = test(model=net, criterion=criterion, data_loader=test_loader)
         # r1_set_loss, r1_set_acc = test(model=net, criterion=criterion, data_loader=r_set_loader1)
         # r2_set_loss, r2_set_acc = test(model=net, criterion=criterion, data_loader=r_set_loader2)
         # r0_set_loss, r0_set_acc = test(model=net, criterion=criterion, data_loader=train_loader)
-        u_set_loss, u_set_acc = test(model=net, criterion=criterion, data_loader=rotated_loader)
-        r_set_loss, r_set_acc = test(model=net, criterion=criterion, data_loader=unrotated_loader)
+
 
         info = {
             "epoch": i+1,
@@ -164,6 +179,8 @@ def main():
         print("Mask: lr: {:.4f}, Train loss: {:.4f}".format(mask_lr, mask_train_loss))
         print("Model: lr: {:.4f}, U-set loss: {:.4f}, U-set ACC: {:.2f}%, R0-set loss: {:.4f}, R0-set ACC: {:.2f}%".format(lr, u_set_loss,u_set_acc*100,r_set_loss,r_set_acc*100))
         # print("R1-set loss: {:.4f}, R1-set ACC: {:.2f}%, R2-set loss: {:.4f}, R2-set ACC: {:.2f}%".format(r1_set_loss, r1_set_acc * 100, r2_set_loss, r2_set_acc * 100))
+
+        plot_mask(mask_params)
         if u_set_acc <= obj_acc:
             break
 
