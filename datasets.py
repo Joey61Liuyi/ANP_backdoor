@@ -7,6 +7,7 @@ from PIL import Image, ImageColor, ImageOps
 from scipy.stats import bernoulli
 import torch
 import torchvision
+import cv2
 import torchvision.transforms as transforms
 # from lacuna import Lacuna10, Lacuna100, Small_Lacuna10, Small_Binary_Lacuna10, Small_Lacuna5
 # from Small_CIFAR10 import Small_CIFAR10, Small_Binary_CIFAR10, Small_CIFAR5
@@ -14,6 +15,56 @@ import torchvision.transforms as transforms
 # from TinyImageNet import TinyImageNet_pretrain, TinyImageNet_finetune, TinyImageNet_finetune5
 # from IPython import embed
 from matplotlib.colors import to_rgb
+
+domain_dict = {
+    'mnist': 0,
+    'mnist_m': 1,
+    'svhn': 2,
+    'syn': 3
+}
+
+class DG_digits(torch.utils.data.Dataset):
+
+    def __init__(self, root, mode, shape, transform):
+        super(DG_digits, self).__init__()
+        self.transform = transform
+        self.data = []
+        self.label = []
+
+        for folder, dirs, files in os.walk(root):
+            folders = folder.split('\\')
+            # print(folder)
+            if len(files) != 0:
+                mode_sign = folders[-2]
+                class_label = folders[-1]
+                domain_label = domain_dict[folders[-3]]
+                if mode_sign == mode:
+                    for file in files:
+                        # tep = Image.open(root+ '\\' + file)
+                        img = cv2.imread(folder+ '\\' + file)
+                        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                        if img.shape[0] < shape[0]:
+                            diff = int((shape[0] - img.shape[0])/2)
+                            npad = ((diff, diff), (diff, diff), (0, 0))
+                            img = np.pad(img, pad_width=npad, mode='constant', constant_values=0)
+                        self.data.append(img)
+                        self.label.append([int(class_label), domain_label])
+        self.data = np.array(self.data)
+        self.label = np.array(self.label)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+
+        img, label = self.data[idx], self.label[idx]
+        img = self.transform(img)
+        label = torch.from_numpy(label)
+        return img, label
+
+    def save(self, filename):
+        pass
+
 
 color_dict = {
   0: to_rgb('red'),
@@ -1019,7 +1070,12 @@ if __name__ == '__main__':
     # full_colored_data('fmnist', ood=False)
     # full_colored_data('mnist', ood=True)
     # full_colored_data('mnist', ood=False)
-    data_set_name = 'mnist'
+    # data_set_name = 'mnist'
     #
-    result = prepare_mix_colored_loader(data_set_name, 0.2, 0.8, 500)
-    print('ok')
+    # result = prepare_mix_colored_loader(data_set_name, 0.2, 0.8, 500)
+    #
+    train_set = DG_digits(root='./data/digits_dg', mode='train', shape=(32,32), transform = transforms.ToTensor())
+    test_set = DG_digits(root='./data/digits_dg', mode='val', shape=(32,32), transform = transforms.ToTensor())
+    train_loader = torch.utils.data.DataLoader(train_set, batch_size=128, shuffle=True)
+    for data, label in train_loader:
+        print(label)
