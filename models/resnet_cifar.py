@@ -74,7 +74,7 @@ class ResNet(nn.Module):
             self._norm_layer = norm_layer
         self.in_planes = 64
 
-        self.conv1 = nn.Conv2d(1, 64, kernel_size=3,
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=3,
                                stride=1, padding=1, bias=False)
         self.bn1 = self._norm_layer(64)
         self.layer1 = self._make_layer(block, 64, num_blocks[0], stride=1)

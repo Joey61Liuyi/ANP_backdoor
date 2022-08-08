@@ -19,17 +19,18 @@ from matplotlib.colors import to_rgb
 domain_dict = {
     'mnist': 0,
     'mnist_m': 1,
-    'svhn': 2,
-    'syn': 3
+    'svhn': 3,
+    'syn': 2
 }
 
 class DG_digits(torch.utils.data.Dataset):
 
-    def __init__(self, root, mode, shape, transform):
+    def __init__(self, root, mode, shape, transform, domain_list):
         super(DG_digits, self).__init__()
         self.transform = transform
         self.data = []
         self.label = []
+        self.domain_label = []
 
         for folder, dirs, files in os.walk(root):
             folders = folder.split('\\')
@@ -38,29 +39,35 @@ class DG_digits(torch.utils.data.Dataset):
                 mode_sign = folders[-2]
                 class_label = folders[-1]
                 domain_label = domain_dict[folders[-3]]
-                if mode_sign == mode:
-                    for file in files:
-                        # tep = Image.open(root+ '\\' + file)
-                        img = cv2.imread(folder+ '\\' + file)
-                        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                        if img.shape[0] < shape[0]:
-                            diff = int((shape[0] - img.shape[0])/2)
-                            npad = ((diff, diff), (diff, diff), (0, 0))
-                            img = np.pad(img, pad_width=npad, mode='constant', constant_values=0)
-                        self.data.append(img)
-                        self.label.append([int(class_label), domain_label])
+                if folders[-3] in domain_list:
+                    if mode_sign == mode:
+                        for file in files:
+                            # img = Image.open(folder+ '\\' + file).convert('RGB')
+                            img = cv2.imread(folder+ '\\' + file)
+                            # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                            if img.shape[0] < shape[0]:
+                                diff = int((shape[0] - img.shape[0])/2)
+                                npad = ((diff, diff), (diff, diff), (0, 0))
+                                img = np.pad(img, pad_width=npad, mode='constant', constant_values=0)
+                            self.data.append(img)
+                            self.label.append(int(class_label))
+                            # self.label.append(int(class_label))
+                            self.domain_label.append(domain_label)
         self.data = np.array(self.data)
         self.label = np.array(self.label)
+        self.domain_label = np.array(self.domain_label)
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
 
-        img, label = self.data[idx], self.label[idx]
+        img, label, domain_label = self.data[idx], self.label[idx], self.domain_label[idx]
+        # img = Image.fromarray(img)
         img = self.transform(img)
-        label = torch.from_numpy(label)
-        return img, label
+        # label = torch.from_numpy(label)
+        # all_label = torch.tensor([label, domain_label])
+        return img, label, domain_label
 
     def save(self, filename):
         pass
@@ -931,8 +938,6 @@ def get_colored_mnist_loader(dataset_name, p: float = 0.8,
     '''
 
 
-
-
     u_set = torch.load('Colored_Mnist_{}.pt'.format(data_num))
     r_set = torch.load('Colored_Mnist_{}_rest.pt'.format(data_num))
 
@@ -1074,8 +1079,18 @@ if __name__ == '__main__':
     #
     # result = prepare_mix_colored_loader(data_set_name, 0.2, 0.8, 500)
     #
-    train_set = DG_digits(root='./data/digits_dg', mode='train', shape=(32,32), transform = transforms.ToTensor())
-    test_set = DG_digits(root='./data/digits_dg', mode='val', shape=(32,32), transform = transforms.ToTensor())
-    train_loader = torch.utils.data.DataLoader(train_set, batch_size=128, shuffle=True)
-    for data, label in train_loader:
-        print(label)
+    transfor = transforms.Compose([
+        # transforms.Resize(size=(32, 32)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    ])
+    train_set = DG_digits(root='./data/digits_dg', mode='train', shape=(32,32), transform = transfor)
+    test_set = DG_digits(root='./data/digits_dg', mode='val', shape=(32,32), transform = transfor)
+    # torch.save(train_set, 'mnist_train.pt')
+    # torch.save(test_set, 'mnist_test.pt')
+    # import image_dataset_loader
+    # result = image_dataset_loader.load('./data/digits_dg/mnist/', ['train', 'val'])
+    # print('ok')
+    # train_loader = torch.utils.data.DataLoader(train_set, batch_size=128, shuffle=True)
+    # for images, label in train_loader:
+    #     print(images)

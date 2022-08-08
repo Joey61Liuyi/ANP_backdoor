@@ -7,18 +7,21 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision.datasets import CIFAR10
 import torchvision.transforms as transforms
-from datasets import get_loaders, get_roated_loader, prepare_mix_colored_loader, MNIST_colored, get_small_rotated_loader, get_augmentation_loader
+from datasets import get_loaders, get_roated_loader, prepare_mix_colored_loader, MNIST_colored, get_small_rotated_loader, get_augmentation_loader, DG_digits
 
 import models
 import data.poison_cifar as poison
-dataset = 'mnist'
+
+full_domain_list = ['mnist', 'mnist_m', 'svhn', 'syn']
+unlearning_domain = 'mnist'
+dataset = 'digits_dg'
 data_num = 5000
 retrain = True
 augment_list =['crop', 'flip', 'rotation', 'color_jitter']
 augment_list = [augment_list[3]]
-output_dir = './{}'.format(dataset)
-for one in augment_list:
-    output_dir += '_'+one
+output_dir = './digits_dg_test'
+# for one in augment_list:
+#     output_dir += '_'+one
 parser = argparse.ArgumentParser(description='Train poisoned networks')
 
 # Basic model parameters.
@@ -31,6 +34,7 @@ parser.add_argument('--schedule', type=int, nargs='+', default=[25, 35],
                     help='Decrease learning rate at   these epochs.')
 parser.add_argument('--save-every', type=int, default=20, help='save checkpoints every few epochs')
 parser.add_argument('--data-dir', type=str, default='../data', help='dir to the dataset')
+
 # if retrain:
 #     parser.add_argument('--output-dir', type=str, default='./unlearning_rotate_retrain_small_{}/'.format(data_num))
 # else:
@@ -116,7 +120,30 @@ def main():
     # train_loader = get_small_rotated_loader('cifar10', data_num=data_num)
     # unrotated_loader, rotated_loader, full_loader, dis_loader = get_colored_mnist_loader('mnist_colored', data_num=2000)
     # train_loader, test_loader = prepare_mix_colored_loader('mnist', p, p, 2000)
-    train_loader, test_loader = get_augmentation_loader(dataset, augment_list, batch_size=128)
+
+
+    transfor = transforms.Compose([
+        # transforms.Resize(size=(32, 32)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    ])
+    train_set = DG_digits(root='./data/digits_dg', mode='train', shape=(32, 32), transform=transfor, domain_list=['mnist', 'mnist_m', 'syn'])
+    test_set = DG_digits(root='./data/digits_dg', mode='val', shape=(32, 32), transform=transfor, domain_list=['mnist', 'mnist_m', 'syn'])
+
+    # train_set_unlearning = DG_digits(root='./data/digits_dg', mode='train', shape=(32, 32), transform=transfor, only_domain='svhn')
+    test_set_unlearning = DG_digits(root='./data/digits_dg', mode='val', shape=(32, 32), transform=transfor,
+                                     domain_list=['svhn'])
+
+    # import torchvision
+    # root = './data'
+    # train_set = torchvision.datasets.CIFAR10(root=root, train=True, download=True, transform = torchvision.transforms.ToTensor())
+    # test_set = torchvision.datasets.CIFAR10(root=root, train=False, download=True, transform= torchvision.transforms.ToTensor())
+
+    train_loader = torch.utils.data.DataLoader(train_set, batch_size=128, shuffle=True)
+    test_loader = torch.utils.data.DataLoader(test_set, batch_size=len(test_set), shuffle=True)
+    test_loader_un = torch.utils.data.DataLoader(test_set_unlearning, batch_size=len(test_set_unlearning), shuffle=True)
+
+    # train_loader, test_loader = get_augmentation_loader(dataset, augment_list, batch_size=128)
     # Step 2: prepare model, criterion, optimizer, and learning rate scheduler.
     net = getattr(models, args.arch)(num_classes=10).to(device)
     criterion = torch.nn.CrossEntropyLoss().to(device)
@@ -138,7 +165,8 @@ def main():
         #     train_loss, train_acc = train(model=net, criterion=criterion, optimizer=optimizer,
         #                                   data_loader=full_loader)
         r_loss, r_acc = test(model=net, criterion=criterion, data_loader=test_loader)
-        print("Epoch {}, full acc: {:.4f}%, R0 acc : {:.4f}%".format(epoch, 100*train_acc, 100*r_acc))
+        u_loss, u_acc = test(model = net, criterion = criterion, data_loader= test_loader_un)
+        print("Epoch {}, full acc: {:.4f}%, r-set acc : {:.4f}%, u-set acc : {:.4f}%".format(epoch, 100*train_acc, 100*r_acc, 100*u_acc))
 
         # if epoch % 10 ==0 or epoch >=45:
         #     ro_loss, ro_acc = test(model=net, criterion=criterion, data_loader=r_set_loader[0])
@@ -171,11 +199,18 @@ def train(model, criterion, optimizer, data_loader):
     model.train()
     total_correct = 0
     total_loss = 0.0
-    for i, (images, labels) in enumerate(data_loader):
+    for i, tup in enumerate(data_loader):
+        if len(tup) == 2:
+            images, labels = tup
+        elif len(tup) == 3:
+            images, labels, domain_label = tup
+
         images, labels = images.to(device), labels.to(device,  dtype = torch.long)
+
         if len(labels.shape)==2:
             labels, domain_label = torch.split(labels, 1, dim=1)
             labels = labels.squeeze().long()
+
         optimizer.zero_grad()
         feature, output = model(images)
         loss = criterion(output, labels)
@@ -197,9 +232,13 @@ def test(model, criterion, data_loader):
     total_correct = 0
     total_loss = 0.0
     with torch.no_grad():
-        for i, (images, labels) in enumerate(data_loader):
-            images, labels = images.to(device), labels.to(device, dtype = torch.long)
-            if len(labels.shape)==2:
+        for i, tup in enumerate(data_loader):
+            if len(tup) == 2:
+                images, labels = tup
+            elif len(tup) == 3:
+                images, labels, domain_label = tup
+            images, labels = images.to(device), labels.to(device, dtype=torch.long)
+            if len(labels.shape) == 2:
                 labels, domain_label = torch.split(labels, 1, dim=1)
                 labels = labels.squeeze().long()
             feature, output = model(images)
@@ -209,7 +248,6 @@ def test(model, criterion, data_loader):
     loss = total_loss / len(data_loader)
     acc = float(total_correct) / len(data_loader.dataset)
     return loss, acc
-
 
 if __name__ == '__main__':
     main()
